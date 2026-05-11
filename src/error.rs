@@ -18,6 +18,9 @@ pub enum LorumError {
         format: String,
         /// Path to the malformed configuration file.
         path: std::path::PathBuf,
+        /// The underlying parse error.
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
     },
 
     /// Configuration file could not be written.
@@ -25,6 +28,9 @@ pub enum LorumError {
     ConfigWrite {
         /// Path to the configuration file that could not be written.
         path: std::path::PathBuf,
+        /// The underlying I/O error.
+        #[source]
+        source: std::io::Error,
     },
 
     /// Requested adapter name is not recognised.
