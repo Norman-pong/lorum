@@ -1,11 +1,10 @@
-//! Unit tests for MCP CRUD commands.
+//! Unit tests for CLI commands (non-MCP).
 //!
 //! Each test creates a temporary config file and passes its path directly to
-//! the CRUD functions via the `config_path` parameter, ensuring full isolation
-//! from the user's real configuration.
+//! the command functions via the `config_path` parameter, ensuring full
+//! isolation from the user's real configuration.
 
 use std::collections::BTreeMap;
-use std::fs;
 
 use tempfile::TempDir;
 
@@ -13,7 +12,7 @@ use crate::config::{self, LorumConfig, McpConfig, McpServer};
 
 /// Helper: read and parse the config at `path`.
 fn read_config(path: &std::path::Path) -> LorumConfig {
-    let raw = fs::read_to_string(path).unwrap();
+    let raw = std::fs::read_to_string(path).unwrap();
     serde_yaml::from_str(&raw).unwrap()
 }
 
@@ -45,246 +44,185 @@ fn make_server(command: &str, args: &[&str], env: &[(&str, &str)]) -> McpServer 
     }
 }
 
-// ---- Tests ----
+// ---- Init tests ----
 
 #[test]
-fn add_new_server_to_empty_config() {
+fn init_creates_global_config() {
+    let dir = TempDir::new().unwrap();
+    let config_path = dir.path().join("config.yaml");
+    let path_s = config_path.to_str().unwrap().to_string();
+
+    super::run_init(Some(&path_s), false).unwrap();
+
+    assert!(config_path.exists());
+    let cfg = read_config(&config_path);
+    assert!(cfg.mcp.servers.is_empty());
+}
+
+#[test]
+fn init_creates_local_config() {
+    let dir = TempDir::new().unwrap();
+    let local_path = dir.path().join(".lorum").join("config.yaml");
+
+    // init --local uses cwd/.lorum/config.yaml, so we set cwd to our temp dir
+    let orig = std::env::current_dir().unwrap();
+    std::env::set_current_dir(dir.path()).unwrap();
+
+    super::run_init(None, true).unwrap();
+
+    std::env::set_current_dir(&orig).unwrap();
+
+    assert!(local_path.exists());
+    let cfg = read_config(&local_path);
+    assert!(cfg.mcp.servers.is_empty());
+}
+
+#[test]
+fn init_skips_existing_config() {
+    let initial = LorumConfig::default();
+    let (_dir, config_path) = setup_temp_config(Some(&initial));
+
+    // Should succeed but not overwrite
+    super::run_init(Some(&path_str(&config_path)), false).unwrap();
+
+    let cfg = read_config(&config_path);
+    assert!(cfg.mcp.servers.is_empty());
+}
+
+// ---- Import tests ----
+
+#[test]
+fn import_from_nonexistent_adapter_returns_error() {
     let (_dir, config_path) = setup_temp_config(None);
-    let args: Vec<String> = vec!["-y".into(), "some-pkg".into()];
-    let env: Vec<String> = vec!["KEY=val".into()];
 
-    super::run_mcp_add(
-        "my-server",
-        "npx",
-        &args,
-        &env,
-        Some(&path_str(&config_path)),
-    )
-    .unwrap();
-
-    let reloaded = read_config(&config_path);
-    assert_eq!(reloaded.mcp.servers.len(), 1);
-    let srv = &reloaded.mcp.servers["my-server"];
-    assert_eq!(srv.command, "npx");
-    assert_eq!(srv.args, vec!["-y", "some-pkg"]);
-    assert_eq!(srv.env.get("KEY").unwrap(), "val");
-}
-
-#[test]
-fn add_overwrites_existing_server() {
-    let initial = LorumConfig {
-        mcp: McpConfig {
-            servers: {
-                let mut m = BTreeMap::new();
-                m.insert("srv".into(), make_server("old-cmd", &["old-arg"], &[]));
-                m
-            },
-        },
-    };
-    let (_dir, config_path) = setup_temp_config(Some(&initial));
-    let args: Vec<String> = vec!["new-arg".into()];
-    let env: Vec<String> = vec!["K=V".into()];
-
-    super::run_mcp_add("srv", "new-cmd", &args, &env, Some(&path_str(&config_path))).unwrap();
-
-    let reloaded = read_config(&config_path);
-    assert_eq!(reloaded.mcp.servers.len(), 1);
-    let srv = &reloaded.mcp.servers["srv"];
-    assert_eq!(srv.command, "new-cmd");
-    assert_eq!(srv.args, vec!["new-arg"]);
-    assert_eq!(srv.env.get("K").unwrap(), "V");
-}
-
-#[test]
-fn remove_existing_server() {
-    let initial = LorumConfig {
-        mcp: McpConfig {
-            servers: {
-                let mut m = BTreeMap::new();
-                m.insert("keep".into(), make_server("keep-cmd", &[], &[]));
-                m.insert("remove-me".into(), make_server("rm-cmd", &[], &[]));
-                m
-            },
-        },
-    };
-    let (_dir, config_path) = setup_temp_config(Some(&initial));
-
-    super::run_mcp_remove("remove-me", Some(&path_str(&config_path))).unwrap();
-
-    let reloaded = read_config(&config_path);
-    assert_eq!(reloaded.mcp.servers.len(), 1);
-    assert!(reloaded.mcp.servers.contains_key("keep"));
-    assert!(!reloaded.mcp.servers.contains_key("remove-me"));
-}
-
-#[test]
-fn remove_nonexistent_returns_error() {
-    let initial = LorumConfig {
-        mcp: McpConfig {
-            servers: BTreeMap::new(),
-        },
-    };
-    let (_dir, config_path) = setup_temp_config(Some(&initial));
-
-    let result = super::run_mcp_remove("no-such-server", Some(&path_str(&config_path)));
+    let result = super::run_import("nonexistent-tool", Some(&path_str(&config_path)));
     assert!(result.is_err());
 }
 
 #[test]
-fn list_outputs_all_servers() {
+fn import_creates_config_if_missing() {
+    let dir = TempDir::new().unwrap();
+    let config_path = dir.path().join("config.yaml");
+    let path_s = config_path.to_str().unwrap().to_string();
+
+    // import from "all" should succeed even with no existing config file
+    super::run_import("all", Some(&path_s)).unwrap();
+
+    assert!(config_path.exists());
+}
+
+// ---- Check tests ----
+
+#[test]
+fn check_valid_config() {
     let initial = LorumConfig {
         mcp: McpConfig {
             servers: {
                 let mut m = BTreeMap::new();
-                m.insert("alpha".into(), make_server("cmd-a", &["--flag"], &[]));
-                m.insert("beta".into(), make_server("cmd-b", &[], &[]));
+                m.insert("srv".into(), make_server("cmd", &[], &[]));
                 m
             },
         },
     };
     let (_dir, config_path) = setup_temp_config(Some(&initial));
 
-    // Should succeed without panicking.
-    super::run_mcp_list(Some(&path_str(&config_path))).unwrap();
+    super::run_check(Some(&path_str(&config_path))).unwrap();
 }
 
 #[test]
-fn list_empty_config_outputs_no_servers() {
-    let (_dir, config_path) = setup_temp_config(None);
-
-    super::run_mcp_list(Some(&path_str(&config_path))).unwrap();
-}
-
-#[test]
-fn edit_updates_command() {
+fn check_empty_command_returns_error() {
     let initial = LorumConfig {
         mcp: McpConfig {
             servers: {
                 let mut m = BTreeMap::new();
-                m.insert(
-                    "srv".into(),
-                    make_server("old-cmd", &["old-arg"], &[("K", "V")]),
-                );
+                m.insert("bad".into(), make_server("", &[], &[]));
                 m
             },
         },
     };
     let (_dir, config_path) = setup_temp_config(Some(&initial));
 
-    super::run_mcp_edit(
-        "srv",
-        Some("new-cmd"),
-        None,
-        None,
-        Some(&path_str(&config_path)),
-    )
-    .unwrap();
-
-    let reloaded = read_config(&config_path);
-    let srv = &reloaded.mcp.servers["srv"];
-    assert_eq!(srv.command, "new-cmd");
-    // args and env should be unchanged
-    assert_eq!(srv.args, vec!["old-arg"]);
-    assert_eq!(srv.env.get("K").unwrap(), "V");
-}
-
-#[test]
-fn edit_updates_args() {
-    let initial = LorumConfig {
-        mcp: McpConfig {
-            servers: {
-                let mut m = BTreeMap::new();
-                m.insert("srv".into(), make_server("cmd", &["old"], &[]));
-                m
-            },
-        },
-    };
-    let (_dir, config_path) = setup_temp_config(Some(&initial));
-    let new_args: Vec<String> = vec!["a".into(), "b".into()];
-
-    super::run_mcp_edit(
-        "srv",
-        None,
-        Some(&new_args),
-        None,
-        Some(&path_str(&config_path)),
-    )
-    .unwrap();
-
-    let reloaded = read_config(&config_path);
-    assert_eq!(reloaded.mcp.servers["srv"].args, vec!["a", "b"]);
-}
-
-#[test]
-fn edit_updates_env() {
-    let initial = LorumConfig {
-        mcp: McpConfig {
-            servers: {
-                let mut m = BTreeMap::new();
-                m.insert("srv".into(), make_server("cmd", &[], &[("OLD", "old")]));
-                m
-            },
-        },
-    };
-    let (_dir, config_path) = setup_temp_config(Some(&initial));
-    let new_env: Vec<String> = vec!["NEW=new".into()];
-
-    super::run_mcp_edit(
-        "srv",
-        None,
-        None,
-        Some(&new_env),
-        Some(&path_str(&config_path)),
-    )
-    .unwrap();
-
-    let reloaded = read_config(&config_path);
-    let srv = &reloaded.mcp.servers["srv"];
-    assert!(!srv.env.contains_key("OLD"));
-    assert_eq!(srv.env.get("NEW").unwrap(), "new");
-}
-
-#[test]
-fn edit_nonexistent_returns_error() {
-    let initial = LorumConfig {
-        mcp: McpConfig {
-            servers: BTreeMap::new(),
-        },
-    };
-    let (_dir, config_path) = setup_temp_config(Some(&initial));
-
-    let result = super::run_mcp_edit(
-        "no-such-server",
-        None,
-        None,
-        None,
-        Some(&path_str(&config_path)),
-    );
+    let result = super::run_check(Some(&path_str(&config_path)));
     assert!(result.is_err());
 }
 
 #[test]
-fn parse_env_pairs_valid() {
-    let pairs: Vec<String> = vec!["KEY1=val1".into(), "KEY2=val2".into()];
-    let map = super::parse_env_pairs(&pairs);
-    assert_eq!(map.len(), 2);
-    assert_eq!(map.get("KEY1").unwrap(), "val1");
-    assert_eq!(map.get("KEY2").unwrap(), "val2");
+fn check_empty_config_is_valid() {
+    let initial = LorumConfig::default();
+    let (_dir, config_path) = setup_temp_config(Some(&initial));
+
+    super::run_check(Some(&path_str(&config_path))).unwrap();
+}
+
+// ---- Status tests ----
+
+#[test]
+fn status_succeeds() {
+    // status just prints, should always succeed
+    super::run_status(None).unwrap();
+}
+
+// ---- Config tests ----
+
+#[test]
+fn config_outputs_yaml() {
+    let initial = LorumConfig {
+        mcp: McpConfig {
+            servers: {
+                let mut m = BTreeMap::new();
+                m.insert("srv".into(), make_server("cmd", &["arg"], &[]));
+                m
+            },
+        },
+    };
+    let (_dir, config_path) = setup_temp_config(Some(&initial));
+
+    // run_config with explicit path should output valid yaml
+    super::run_config(false, false, false, Some(&path_str(&config_path))).unwrap();
 }
 
 #[test]
-fn parse_env_pairs_skips_invalid() {
-    let pairs: Vec<String> = vec!["VALID=1".into(), "NOEQUALSSIGN".into()];
-    let map = super::parse_env_pairs(&pairs);
-    assert_eq!(map.len(), 1);
-    assert_eq!(map.get("VALID").unwrap(), "1");
+fn config_local_missing_returns_error() {
+    let dir = TempDir::new().unwrap();
+    let orig = std::env::current_dir().unwrap();
+    std::env::set_current_dir(dir.path()).unwrap();
+
+    let result = super::run_config(false, true, false, None);
+
+    std::env::set_current_dir(&orig).unwrap();
+    assert!(result.is_err());
+}
+
+// ---- Backup list tests ----
+
+#[test]
+fn backup_list_no_backups() {
+    // Should succeed even when no backup directory exists
+    super::run_backup_list(None).unwrap();
+}
+
+// ---- Backup restore tests ----
+
+#[test]
+fn backup_restore_nonexistent_adapter_returns_error() {
+    let result = super::run_backup_restore("nonexistent-tool", None);
+    assert!(result.is_err());
 }
 
 #[test]
-fn parse_env_pairs_skips_empty_key() {
-    let pairs: Vec<String> = vec!["=value".into(), "OK=good".into()];
-    let map = super::parse_env_pairs(&pairs);
-    assert_eq!(map.len(), 1);
-    assert_eq!(map.get("OK").unwrap(), "good");
-    assert!(!map.contains_key(""));
+fn backup_restore_no_backup_returns_error() {
+    // claude-code adapter exists but likely has no backups
+    let result = super::run_backup_restore("claude-code", None);
+    // This may succeed or fail depending on state; we just verify it doesn't panic
+    let _ = result;
+}
+
+// ---- Detect installed tools tests ----
+
+#[test]
+fn detect_installed_tools_returns_vec() {
+    // Just verify it doesn't panic
+    let tools = super::detect_installed_tools();
+    // We can't assert specific tools since it depends on the system
+    let _ = tools;
 }

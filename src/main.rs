@@ -154,23 +154,25 @@ impl Cli {
     /// Parse CLI arguments and dispatch to the appropriate subcommand.
     fn run(self) -> Result<(), lorum::error::LorumError> {
         match self.command {
-            Commands::Init { local } => commands::run_init(local),
-            Commands::Import { from } => commands::run_import(&from),
+            Commands::Init { local } => commands::run_init(self.config.as_deref(), local),
+            Commands::Import { from } => commands::run_import(&from, self.config.as_deref()),
             Commands::Sync {
                 dry_run,
                 tools,
                 expand_env,
-            } => commands::run_sync(dry_run, &tools, expand_env),
-            Commands::Check => commands::run_check(),
-            Commands::Status => commands::run_status(),
+            } => commands::run_sync(dry_run, &tools, expand_env, self.config.as_deref()),
+            Commands::Check => commands::run_check(self.config.as_deref()),
+            Commands::Status => commands::run_status(self.config.as_deref()),
             Commands::Config {
                 resolve_env,
                 local,
                 global,
-            } => commands::run_config(resolve_env, local, global),
+            } => commands::run_config(resolve_env, local, global, self.config.as_deref()),
             Commands::Backup { action } => match action {
-                BackupAction::List => commands::run_backup_list(),
-                BackupAction::Restore { tool } => commands::run_backup_restore(&tool),
+                BackupAction::List => commands::run_backup_list(self.config.as_deref()),
+                BackupAction::Restore { tool } => {
+                    commands::run_backup_restore(&tool, self.config.as_deref())
+                }
             },
             Commands::Mcp { action } => match action {
                 McpAction::Add {
@@ -178,17 +180,19 @@ impl Cli {
                     command,
                     args,
                     env,
-                } => commands::run_mcp_add(&name, &command, &args, &env, self.config.as_deref()),
-                McpAction::Remove { name } => {
-                    commands::run_mcp_remove(&name, self.config.as_deref())
+                } => {
+                    commands::mcp::run_mcp_add(&name, &command, &args, &env, self.config.as_deref())
                 }
-                McpAction::List => commands::run_mcp_list(self.config.as_deref()),
+                McpAction::Remove { name } => {
+                    commands::mcp::run_mcp_remove(&name, self.config.as_deref())
+                }
+                McpAction::List => commands::mcp::run_mcp_list(self.config.as_deref()),
                 McpAction::Edit {
                     name,
                     command,
                     args,
                     env,
-                } => commands::run_mcp_edit(
+                } => commands::mcp::run_mcp_edit(
                     &name,
                     command.as_deref(),
                     args.as_deref(),
