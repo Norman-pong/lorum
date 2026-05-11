@@ -50,18 +50,21 @@ pub struct ProjectConfig {
     pub exclude: Vec<String>,
 }
 
-/// Returns the global configuration file path: `~/.config/lorum/config.yaml`.
+/// Returns the global configuration file path: `~/.config/lorum/config.yaml`
+/// (XDG Base Directory Specification).
 ///
-/// Uses the XDG configuration directory as reported by the `dirs` crate.
-///
-/// # Errors
-///
-/// Returns [`LorumError::Other`] if the system configuration directory
-/// cannot be determined.
+/// Uses `$XDG_CONFIG_HOME/lorum` if that environment variable is set.
+/// Otherwise falls back to `$HOME/.config/lorum` on all platforms
+/// (including macOS), overriding the macOS-native `dirs::config_dir()` path.
 pub fn global_config_path() -> Result<PathBuf, LorumError> {
-    let config_dir = dirs::config_dir().ok_or_else(|| LorumError::Other {
-        message: "cannot determine system config directory".into(),
-    })?;
+    let config_dir = if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        PathBuf::from(xdg)
+    } else {
+        let home = dirs::home_dir().ok_or_else(|| LorumError::Other {
+            message: "cannot determine home directory".into(),
+        })?;
+        home.join(".config")
+    };
     Ok(config_dir.join("lorum").join("config.yaml"))
 }
 
