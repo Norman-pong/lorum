@@ -61,7 +61,7 @@ pub fn find_adapter(name: &str) -> Option<Box<dyn ToolAdapter>> {
 
 /// Shared test utilities for adapter tests.
 #[cfg(test)]
-mod test_utils {
+pub(crate) mod test_utils {
     use crate::config::McpServer;
 
     /// Create a test [`McpServer`] with the given command, args, and env.
