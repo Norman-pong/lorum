@@ -111,16 +111,43 @@ enum BackupAction {
 #[derive(clap::Subcommand)]
 enum McpAction {
     /// Add a new MCP server entry.
-    Add,
+    Add {
+        /// Server name.
+        name: String,
+        /// Command to start the server.
+        #[arg(long)]
+        command: String,
+        /// Arguments for the command.
+        #[arg(long = "args", num_args = 1..)]
+        args: Vec<String>,
+        /// Environment variables (KEY=VALUE).
+        #[arg(long = "env", num_args = 1..)]
+        env: Vec<String>,
+    },
 
     /// Remove an MCP server entry.
-    Remove,
+    Remove {
+        /// Server name to remove.
+        name: String,
+    },
 
     /// List configured MCP servers.
     List,
 
     /// Edit an existing MCP server entry.
-    Edit,
+    Edit {
+        /// Server name to edit.
+        name: String,
+        /// New command (optional).
+        #[arg(long)]
+        command: Option<String>,
+        /// New arguments (optional, replaces all existing args).
+        #[arg(long = "args", num_args = 1..)]
+        args: Option<Vec<String>>,
+        /// New environment variables (optional, replaces all existing env).
+        #[arg(long = "env", num_args = 1..)]
+        env: Option<Vec<String>>,
+    },
 }
 
 impl Cli {
@@ -146,10 +173,28 @@ impl Cli {
                 BackupAction::Restore { tool } => commands::run_backup_restore(&tool),
             },
             Commands::Mcp { action } => match action {
-                McpAction::Add => commands::run_mcp_add(),
-                McpAction::Remove => commands::run_mcp_remove(),
-                McpAction::List => commands::run_mcp_list(),
-                McpAction::Edit => commands::run_mcp_edit(),
+                McpAction::Add {
+                    name,
+                    command,
+                    args,
+                    env,
+                } => commands::run_mcp_add(&name, &command, &args, &env, self.config.as_deref()),
+                McpAction::Remove { name } => {
+                    commands::run_mcp_remove(&name, self.config.as_deref())
+                }
+                McpAction::List => commands::run_mcp_list(self.config.as_deref()),
+                McpAction::Edit {
+                    name,
+                    command,
+                    args,
+                    env,
+                } => commands::run_mcp_edit(
+                    &name,
+                    command.as_deref(),
+                    args.as_deref(),
+                    env.as_deref(),
+                    self.config.as_deref(),
+                ),
             },
             Commands::Hook => commands::run_hook(),
             Commands::Skill => commands::run_skill(),
