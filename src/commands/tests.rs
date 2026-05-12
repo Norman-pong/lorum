@@ -52,7 +52,7 @@ fn init_creates_global_config() {
     let config_path = dir.path().join("config.yaml");
     let path_s = config_path.to_str().unwrap().to_string();
 
-    super::run_init(Some(&path_s), false).unwrap();
+    super::run_init(Some(&path_s), false, true).unwrap();
 
     assert!(config_path.exists());
     let cfg = read_config(&config_path);
@@ -66,11 +66,23 @@ fn init_creates_local_config() {
 
     // init --local uses cwd/.lorum/config.yaml, so we set cwd to our temp dir
     let orig = std::env::current_dir().unwrap();
+    let orig_home = std::env::var_os("HOME");
+    unsafe {
+        std::env::set_var("HOME", dir.path());
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
     std::env::set_current_dir(dir.path()).unwrap();
 
-    super::run_init(None, true).unwrap();
+    super::run_init(None, true, true).unwrap();
 
     std::env::set_current_dir(&orig).unwrap();
+    unsafe {
+        if let Some(h) = orig_home {
+            std::env::set_var("HOME", h);
+        } else {
+            std::env::remove_var("HOME");
+        }
+    }
 
     assert!(local_path.exists());
     let cfg = read_config(&local_path);
@@ -82,11 +94,11 @@ fn init_skips_existing_config() {
     let initial = LorumConfig::default();
     let (_dir, config_path) = setup_temp_config(Some(&initial));
 
-    // Should succeed but not overwrite
-    super::run_init(Some(&path_str(&config_path)), false).unwrap();
-
-    let cfg = read_config(&config_path);
-    assert!(cfg.mcp.servers.is_empty());
+    // Should fail when config already exists
+    let result = super::run_init(Some(&path_str(&config_path)), false, true);
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("config already exists"));
 }
 
 // ---- Import tests ----
@@ -295,12 +307,12 @@ fn is_valid_kebab_case_accepts_valid() {
 
 #[test]
 fn is_valid_kebab_case_rejects_invalid() {
-    assert!(!super::is_valid_kebab_case(""));           // empty
-    assert!(!super::is_valid_kebab_case("-start"));      // leading hyphen
-    assert!(!super::is_valid_kebab_case("end-"));        // trailing hyphen
-    assert!(!super::is_valid_kebab_case("a--b"));        // double hyphen
-    assert!(!super::is_valid_kebab_case("UPPER"));       // uppercase
-    assert!(!super::is_valid_kebab_case("snake_case"));  // underscore
+    assert!(!super::is_valid_kebab_case("")); // empty
+    assert!(!super::is_valid_kebab_case("-start")); // leading hyphen
+    assert!(!super::is_valid_kebab_case("end-")); // trailing hyphen
+    assert!(!super::is_valid_kebab_case("a--b")); // double hyphen
+    assert!(!super::is_valid_kebab_case("UPPER")); // uppercase
+    assert!(!super::is_valid_kebab_case("snake_case")); // underscore
 }
 
 #[test]

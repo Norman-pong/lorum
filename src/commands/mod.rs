@@ -12,6 +12,9 @@ pub mod backup_cmds;
 pub mod hook;
 #[cfg(test)]
 mod hook_tests;
+pub mod init;
+#[cfg(test)]
+mod init_tests;
 pub mod mcp;
 #[cfg(test)]
 mod mcp_tests;
@@ -42,28 +45,24 @@ fn load_config_or_default(path: &std::path::Path) -> Result<config::LorumConfig,
 }
 
 /// Run the `init` subcommand: creates a default config file.
-pub fn run_init(config_path: Option<&str>, local: bool) -> Result<(), LorumError> {
-    let path = if local {
-        std::env::current_dir()?.join(".lorum").join("config.yaml")
+pub fn run_init(config_path: Option<&str>, local: bool, yes: bool) -> Result<(), LorumError> {
+    if local {
+        init::run_interactive_init(true, yes)
+    } else if let Some(path) = config_path {
+        // Direct path mode (used by tests): bypass interactive init
+        let path = std::path::PathBuf::from(path);
+        if path.exists() {
+            return Err(LorumError::Other {
+                message: format!("config already exists: {}", path.display()),
+            });
+        }
+        let cfg = config::LorumConfig::default();
+        config::save_config(&path, &cfg)?;
+        println!("created config at: {}", path.display());
+        Ok(())
     } else {
-        resolve_path(config_path)?
-    };
-
-    if path.exists() {
-        println!("config already exists: {}", path.display());
-        return Ok(());
+        init::run_interactive_init(false, yes)
     }
-
-    let detected = detect_installed_tools();
-    let cfg = config::LorumConfig::default();
-    config::save_config(&path, &cfg)?;
-
-    println!("created config at: {}", path.display());
-    if !detected.is_empty() {
-        println!("detected tools: {}", detected.join(", "));
-        println!("run `lorum import --from <tool>` to import MCP configuration");
-    }
-    Ok(())
 }
 
 /// Detect which AI coding tools are installed by checking for their config dirs.
@@ -239,9 +238,7 @@ pub fn run_check(config_path: Option<&str>) -> Result<(), LorumError> {
             continue;
         }
         if !is_valid_kebab_case(event) {
-            issues.push(format!(
-                "hooks: event '{event}' is not valid kebab-case"
-            ));
+            issues.push(format!("hooks: event '{event}' is not valid kebab-case"));
         }
         for (i, h) in handlers.iter().enumerate() {
             if h.matcher.is_empty() {
@@ -259,26 +256,24 @@ pub fn run_check(config_path: Option<&str>) -> Result<(), LorumError> {
 
     // ── Skills directory checks ─────────────────────────────────────
     match crate::skills::global_skills_dir() {
-        Ok(dir) if dir.exists() => {
-            match crate::skills::scan_skills_dir(&dir) {
-                Ok(entries) => {
-                    for entry in &entries {
-                        if entry.manifest.name.is_empty() {
-                            issues.push(format!(
-                                "skill '{}' has empty manifest name",
-                                entry.dir_path.display()
-                            ));
-                        }
+        Ok(dir) if dir.exists() => match crate::skills::scan_skills_dir(&dir) {
+            Ok(entries) => {
+                for entry in &entries {
+                    if entry.manifest.name.is_empty() {
+                        issues.push(format!(
+                            "skill '{}' has empty manifest name",
+                            entry.dir_path.display()
+                        ));
                     }
                 }
-                Err(e) => {
-                    issues.push(format!(
-                        "failed to scan skills directory '{}': {e}",
-                        dir.display()
-                    ));
-                }
             }
-        }
+            Err(e) => {
+                issues.push(format!(
+                    "failed to scan skills directory '{}': {e}",
+                    dir.display()
+                ));
+            }
+        },
         _ => {} // No global skills directory yet — that's fine.
     }
 
@@ -315,7 +310,10 @@ fn command_exists(cmd: &str) -> bool {
                 return true;
             }
             #[cfg(windows)]
-            if std::path::Path::new(dir).join(format!("{cmd}.exe")).is_file() {
+            if std::path::Path::new(dir)
+                .join(format!("{cmd}.exe"))
+                .is_file()
+            {
                 return true;
             }
         }
@@ -355,7 +353,8 @@ fn find_unset_env_refs(value: &str) -> Vec<String> {
 /// Validate that a string is valid kebab-case (lowercase letters, digits, hyphens).
 fn is_valid_kebab_case(s: &str) -> bool {
     !s.is_empty()
-        && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         && !s.starts_with('-')
         && !s.ends_with('-')
         && !s.contains("--")
@@ -430,7 +429,11 @@ fn rules_status(name: &str, project_root: Option<&std::path::Path>) -> Option<us
     let adapter = crate::adapters::find_rules_adapter(name)?;
     let root = project_root?;
     let content = adapter.read_rules(root).ok()?;
-    Some(content.map(|c| crate::rules::parse_rules(&c).sections.len()).unwrap_or(0))
+    Some(
+        content
+            .map(|c| crate::rules::parse_rules(&c).sections.len())
+            .unwrap_or(0),
+    )
 }
 
 /// Query hooks count for a tool, returning `None` if unsupported.
@@ -440,7 +443,10 @@ fn hooks_status(name: &str) -> Option<usize> {
     if !paths.iter().any(|p| p.exists()) {
         return Some(0);
     }
-    adapter.read_hooks().map(|h| h.events.values().map(|v| v.len()).sum()).ok()
+    adapter
+        .read_hooks()
+        .map(|h| h.events.values().map(|v| v.len()).sum())
+        .ok()
 }
 
 /// Query skills count for a tool, returning `None` if unsupported.

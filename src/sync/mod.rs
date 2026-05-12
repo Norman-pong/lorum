@@ -840,7 +840,11 @@ fn dry_run_skills_adapter(
     // Skills present in target but absent from source would be removed during sync.
     let to_remove = target_skills
         .iter()
-        .filter(|t| !source_skills.iter().any(|s| s.manifest.name == t.manifest.name))
+        .filter(|t| {
+            !source_skills
+                .iter()
+                .any(|s| s.manifest.name == t.manifest.name)
+        })
         .count();
 
     SkillsDryRunResult {

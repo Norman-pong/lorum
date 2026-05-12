@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use lorum::skills::{SkillEntry, copy_dir_recursive, scan_skills_dir};
-use lorum::sync::{SkillsSyncResult, sync_skills_tools};
+use lorum::skills::{copy_dir_recursive, scan_skills_dir};
+use lorum::sync::sync_skills_tools;
 
 fn make_skill_dir(parent: &Path, name: &str) -> std::path::PathBuf {
     let dir = parent.join(name);

@@ -66,10 +66,7 @@ pub fn parse_skill_manifest(content: &str, path: &Path) -> Result<SkillManifest,
     let rest = rest.strip_prefix('\n').unwrap_or(rest);
 
     let end = rest.find("\n---").ok_or_else(|| LorumError::Other {
-        message: format!(
-            "{} frontmatter must be closed with '---'",
-            path.display()
-        ),
+        message: format!("{} frontmatter must be closed with '---'", path.display()),
     })?;
 
     let yaml_str = &rest[..end];
@@ -115,8 +112,16 @@ pub fn scan_skills_dir(dir: &Path) -> Result<Vec<SkillEntry>, LorumError> {
     }
 
     entries.sort_by(|a, b| {
-        let a_name = a.dir_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        let b_name = b.dir_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let a_name = a
+            .dir_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        let b_name = b
+            .dir_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
         a_name.cmp(b_name)
     });
     Ok(entries)
@@ -134,8 +139,8 @@ pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), LorumError> {
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
 
-        let metadata = std::fs::symlink_metadata(&src_path)
-            .map_err(|e| LorumError::Io { source: e })?;
+        let metadata =
+            std::fs::symlink_metadata(&src_path).map_err(|e| LorumError::Io { source: e })?;
 
         if metadata.file_type().is_symlink() {
             continue; // Skip symlinks to avoid infinite recursion
@@ -147,8 +152,7 @@ pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), LorumError> {
             std::fs::copy(&src_path, &dst_path)?;
             // Also preserve permissions
             let perms = metadata.permissions();
-            std::fs::set_permissions(&dst_path, perms)
-                .map_err(|e| LorumError::Io { source: e })?;
+            std::fs::set_permissions(&dst_path, perms).map_err(|e| LorumError::Io { source: e })?;
         }
     }
     Ok(())

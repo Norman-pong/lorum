@@ -100,10 +100,12 @@ fn add_rejects_directory_name_mismatch() {
 
     let result = skill::run_skill_add("wrong-name", skill_src.to_str().unwrap(), Some(dst.path()));
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("source directory name"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("source directory name")
+    );
 }
 
 #[test]
@@ -141,7 +143,12 @@ fn add_rejects_path_traversal_name() {
         Some(dst.path()),
     );
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("invalid skill name"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("invalid skill name")
+    );
 }
 
 #[test]
@@ -149,5 +156,10 @@ fn remove_rejects_path_traversal_name() {
     let dir = TempDir::new().unwrap();
     let result = skill::run_skill_remove("../../../etc", Some(dir.path()));
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("invalid skill name"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("invalid skill name")
+    );
 }

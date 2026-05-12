@@ -19,7 +19,11 @@ struct Cli {
 
     /// Subcommand to execute.
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
+
+    /// Skip the welcome message when no config exists.
+    #[arg(long = "no-welcome", global = true)]
+    no_welcome: bool,
 }
 
 /// Top-level subcommands for the lorum CLI.
@@ -30,6 +34,10 @@ enum Commands {
         /// Create a local (project-level) configuration instead of global.
         #[arg(long)]
         local: bool,
+
+        /// Skip interactive prompts and auto-import detected tools.
+        #[arg(long)]
+        yes: bool,
     },
 
     /// Import configuration from an existing AI coding tool.
@@ -305,27 +313,51 @@ impl Cli {
     /// Parse CLI arguments and dispatch to the appropriate subcommand.
     fn run(self) -> Result<(), lorum::error::LorumError> {
         match self.command {
-            Commands::Init { local } => commands::run_init(self.config.as_deref(), local),
-            Commands::Import { from } => commands::run_import(&from, self.config.as_deref()),
-            Commands::Sync {
+            None => {
+                let config_path = self.config.as_deref().map(std::path::Path::new);
+                let has_config = lorum::config::resolve_effective_config_from_cwd(config_path)
+                    .map(|cfg| {
+                        !cfg.mcp.servers.is_empty()
+                            || !cfg.hooks.events.is_empty()
+                            || lorum::config::find_project_config(
+                                &std::env::current_dir().unwrap_or_default(),
+                            )
+                            .is_some()
+                    })
+                    .unwrap_or(false);
+                if !has_config && !self.no_welcome {
+                    println!("Welcome to lorum! You haven't created a configuration file yet.\n");
+                    println!("Quick start:");
+                    println!("  lorum init              Create initial config");
+                    println!("  lorum init --local      Create project-level config");
+                    println!("  lorum import --from all Import from existing tools");
+                    std::process::exit(0);
+                }
+                std::process::exit(1);
+            }
+            Some(Commands::Init { local, yes }) => {
+                commands::run_init(self.config.as_deref(), local, yes)
+            }
+            Some(Commands::Import { from }) => commands::run_import(&from, self.config.as_deref()),
+            Some(Commands::Sync {
                 dry_run,
                 tools,
                 expand_env,
-            } => commands::run_sync(dry_run, &tools, expand_env, self.config.as_deref()),
-            Commands::Check => commands::run_check(self.config.as_deref()),
-            Commands::Status => commands::run_status(self.config.as_deref()),
-            Commands::Config {
+            }) => commands::run_sync(dry_run, &tools, expand_env, self.config.as_deref()),
+            Some(Commands::Check) => commands::run_check(self.config.as_deref()),
+            Some(Commands::Status) => commands::run_status(self.config.as_deref()),
+            Some(Commands::Config {
                 resolve_env,
                 local,
                 global,
-            } => commands::run_config(resolve_env, local, global, self.config.as_deref()),
-            Commands::Backup { action } => match action {
+            }) => commands::run_config(resolve_env, local, global, self.config.as_deref()),
+            Some(Commands::Backup { action }) => match action {
                 BackupAction::List => commands::run_backup_list(self.config.as_deref()),
                 BackupAction::Restore { tool } => {
                     commands::run_backup_restore(&tool, self.config.as_deref())
                 }
             },
-            Commands::Mcp { action } => match action {
+            Some(Commands::Mcp { action }) => match action {
                 McpAction::Add {
                     name,
                     command,
@@ -351,7 +383,7 @@ impl Cli {
                     self.config.as_deref(),
                 ),
             },
-            Commands::Rule { action } => match action {
+            Some(Commands::Rule { action }) => match action {
                 RuleAction::Init => commands::rule::run_rule_init(),
                 RuleAction::Add { name, content } => commands::rule::run_rule_add(&name, &content),
                 RuleAction::Remove { name } => commands::rule::run_rule_remove(&name),
@@ -365,7 +397,7 @@ impl Cli {
                 }
                 RuleAction::Import { from } => commands::rule::run_rule_import(&from),
             },
-            Commands::Hook { action } => match action {
+            Some(Commands::Hook { action }) => match action {
                 HookAction::Add {
                     event,
                     matcher,
@@ -390,7 +422,7 @@ impl Cli {
                     commands::hook::run_hook_sync(dry_run, &tools, self.config.as_deref())
                 }
             },
-            Commands::Skill { action } => match action {
+            Some(Commands::Skill { action }) => match action {
                 SkillAction::List => commands::skill::run_skill_list(None),
                 SkillAction::Show { name } => commands::skill::run_skill_show(&name, None),
                 SkillAction::Add { name, from } => {
