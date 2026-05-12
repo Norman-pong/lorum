@@ -231,3 +231,173 @@ fn detect_installed_tools_returns_vec() {
     // We can't assert specific tools since it depends on the system
     let _ = tools;
 }
+
+// ---- Status helper tests ----
+
+#[test]
+fn fmt_count_none() {
+    assert_eq!(super::fmt_count(None), "-");
+}
+
+#[test]
+fn fmt_count_zero() {
+    assert_eq!(super::fmt_count(Some(0)), "·");
+}
+
+#[test]
+fn fmt_count_positive() {
+    assert_eq!(super::fmt_count(Some(42)), "42");
+}
+
+// ---- Check helper tests ----
+
+#[test]
+fn command_exists_with_absolute_path() {
+    let dir = TempDir::new().unwrap();
+    let file = dir.path().join("my-cmd");
+    std::fs::write(&file, "").unwrap();
+    assert!(super::command_exists(file.to_str().unwrap()));
+}
+
+#[test]
+fn command_exists_missing_file() {
+    assert!(!super::command_exists("/tmp/no-such-command-xyz-abc"));
+}
+
+#[test]
+fn find_unset_env_refs_finds_unset() {
+    // Ensure the variable is not set
+    unsafe { std::env::remove_var("LORUM_TEST_UNSET_VAR_42") };
+    let result = super::find_unset_env_refs("prefix_${LORUM_TEST_UNSET_VAR_42}_suffix");
+    assert_eq!(result, vec!["LORUM_TEST_UNSET_VAR_42"]);
+}
+
+#[test]
+fn find_unset_env_refs_ignores_set() {
+    unsafe { std::env::set_var("LORUM_TEST_SET_VAR_42", "value") };
+    let result = super::find_unset_env_refs("${LORUM_TEST_SET_VAR_42}");
+    assert!(result.is_empty());
+    unsafe { std::env::remove_var("LORUM_TEST_SET_VAR_42") };
+}
+
+#[test]
+fn find_unset_env_refs_no_refs() {
+    let result = super::find_unset_env_refs("plain text without refs");
+    assert!(result.is_empty());
+}
+
+#[test]
+fn is_valid_kebab_case_accepts_valid() {
+    assert!(super::is_valid_kebab_case("pre-tool-use"));
+    assert!(super::is_valid_kebab_case("event-1"));
+    assert!(super::is_valid_kebab_case("a"));
+}
+
+#[test]
+fn is_valid_kebab_case_rejects_invalid() {
+    assert!(!super::is_valid_kebab_case(""));           // empty
+    assert!(!super::is_valid_kebab_case("-start"));      // leading hyphen
+    assert!(!super::is_valid_kebab_case("end-"));        // trailing hyphen
+    assert!(!super::is_valid_kebab_case("a--b"));        // double hyphen
+    assert!(!super::is_valid_kebab_case("UPPER"));       // uppercase
+    assert!(!super::is_valid_kebab_case("snake_case"));  // underscore
+}
+
+#[test]
+fn check_missing_command_returns_error() {
+    let initial = LorumConfig {
+        mcp: McpConfig {
+            servers: {
+                let mut m = BTreeMap::new();
+                m.insert(
+                    "bad".into(),
+                    make_server("/tmp/no-such-lorum-cmd-xyz", &[], &[]),
+                );
+                m
+            },
+        },
+        ..Default::default()
+    };
+    let (_dir, config_path) = setup_temp_config(Some(&initial));
+
+    let result = super::run_check(Some(&path_str(&config_path)));
+    assert!(result.is_err());
+}
+
+#[test]
+fn check_unset_env_ref_returns_error() {
+    unsafe { std::env::remove_var("LORUM_TEST_UNSET_ENV_99") };
+    let initial = LorumConfig {
+        mcp: McpConfig {
+            servers: {
+                let mut m = BTreeMap::new();
+                m.insert(
+                    "srv".into(),
+                    make_server("cargo", &[], &[("KEY", "${LORUM_TEST_UNSET_ENV_99}")]),
+                );
+                m
+            },
+        },
+        ..Default::default()
+    };
+    let (_dir, config_path) = setup_temp_config(Some(&initial));
+
+    let result = super::run_check(Some(&path_str(&config_path)));
+    assert!(result.is_err());
+}
+
+#[test]
+fn check_invalid_hook_event_returns_error() {
+    use crate::config::{HookHandler, HooksConfig};
+
+    let initial = LorumConfig {
+        mcp: McpConfig::default(),
+        hooks: HooksConfig {
+            events: {
+                let mut m = BTreeMap::new();
+                m.insert(
+                    "InvalidEvent".into(),
+                    vec![HookHandler {
+                        matcher: "Bash".into(),
+                        command: "echo ok".into(),
+                        timeout: None,
+                        handler_type: None,
+                    }],
+                );
+                m
+            },
+        },
+    };
+    let (_dir, config_path) = setup_temp_config(Some(&initial));
+
+    let result = super::run_check(Some(&path_str(&config_path)));
+    assert!(result.is_err());
+}
+
+#[test]
+fn check_empty_hook_handler_returns_error() {
+    use crate::config::{HookHandler, HooksConfig};
+
+    let initial = LorumConfig {
+        mcp: McpConfig::default(),
+        hooks: HooksConfig {
+            events: {
+                let mut m = BTreeMap::new();
+                m.insert(
+                    "pre-tool-use".into(),
+                    vec![HookHandler {
+                        matcher: "".into(),
+                        command: "".into(),
+                        timeout: None,
+                        handler_type: None,
+                    }],
+                );
+                m
+            },
+        },
+    };
+    let (_dir, config_path) = setup_temp_config(Some(&initial));
+
+    let result = super::run_check(Some(&path_str(&config_path)));
+    assert!(result.is_err());
+}
