@@ -100,6 +100,30 @@ pub fn find_rules_adapter(name: &str) -> Option<Box<dyn RulesAdapter>> {
     all_rules_adapters().into_iter().find(|a| a.name() == name)
 }
 
+/// Read a rules file at `path`, returning `None` if it does not exist.
+pub(crate) fn read_rules_file(path: &Path) -> Result<Option<String>, LorumError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(path)?;
+    Ok(Some(content))
+}
+
+/// Write rules content to `path`, creating parent directories if needed.
+pub(crate) fn write_rules_file(path: &Path, content: &str) -> Result<(), LorumError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| LorumError::ConfigWrite {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
+    }
+    std::fs::write(path, content).map_err(|e| LorumError::ConfigWrite {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
+    Ok(())
+}
+
 /// Shared test utilities for adapter tests.
 #[cfg(test)]
 pub(crate) mod test_utils {

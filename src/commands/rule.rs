@@ -41,7 +41,7 @@ pub(crate) fn rule_init(root: &Path) -> Result<(), LorumError> {
     }
 
     let rules = RulesFile {
-        preamble: "# Project Rules\n\nThis file defines AI coding rules managed by lorum.\nEach `##` heading defines a rule section that can be synced to target tools.".to_owned(),
+        preamble: crate::rules::DEFAULT_PREAMBLE.to_owned(),
         sections: vec![RulesSection {
             name: "Code Style".to_owned(),
             content: "Add your code style rules here.".to_owned(),
@@ -283,7 +283,7 @@ pub(crate) fn rule_import(root: &Path, from: &str) -> Result<(), LorumError> {
         println!("imported rules from {from} (appended as section: {section_name})");
     } else {
         let rules = RulesFile {
-            preamble: "# Project Rules\n\nThis file defines AI coding rules managed by lorum.\nEach `##` heading defines a rule section that can be synced to target tools.".to_owned(),
+            preamble: crate::rules::DEFAULT_PREAMBLE.to_owned(),
             sections: vec![RulesSection {
                 name: format!("Imported from {from}"),
                 content: imported_content,

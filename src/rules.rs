@@ -11,6 +11,13 @@ use std::path::{Path, PathBuf};
 
 use crate::error::LorumError;
 
+/// Default preamble text for newly created rules files.
+pub const DEFAULT_PREAMBLE: &str = "\
+# Project Rules
+
+This file defines AI coding rules managed by lorum.
+Each `##` heading defines a rule section that can be synced to target tools.";
+
 /// A single rule section extracted from a `##` heading.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RulesSection {

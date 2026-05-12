@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::adapters::RulesAdapter;
+use crate::adapters::{RulesAdapter, read_rules_file, write_rules_file};
 use crate::error::LorumError;
 
 /// Adapter for Windsurf.
@@ -23,24 +23,11 @@ impl RulesAdapter for WindsurfRulesAdapter {
     }
 
     fn read_rules(&self, project_root: &Path) -> Result<Option<String>, LorumError> {
-        let path = self.rules_path(project_root);
-        if !path.exists() {
-            return Ok(None);
-        }
-        let content = std::fs::read_to_string(&path)?;
-        Ok(Some(content))
+        read_rules_file(&self.rules_path(project_root))
     }
 
     fn write_rules(&self, project_root: &Path, content: &str) -> Result<(), LorumError> {
-        let path = self.rules_path(project_root);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| LorumError::ConfigWrite {
-                path: path.clone(),
-                source: e,
-            })?;
-        }
-        std::fs::write(&path, content).map_err(|e| LorumError::ConfigWrite { path, source: e })?;
-        Ok(())
+        write_rules_file(&self.rules_path(project_root), content)
     }
 }
 

@@ -445,7 +445,7 @@ fn test_rules_file_roundtrip_via_sync() {
         let read = adapter
             .read_rules(root)
             .unwrap()
-            .expect(&format!("{} should have rules file", adapter.name()));
+            .unwrap_or_else(|| panic!("{} should have rules file", adapter.name()));
         assert_eq!(
             read,
             content,

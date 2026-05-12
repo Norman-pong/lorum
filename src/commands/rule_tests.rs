@@ -5,7 +5,7 @@
 //! ensuring full isolation from the user's real configuration.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 
@@ -29,7 +29,7 @@ fn setup_with_rules(rules: &RulesFile) -> (TempDir, PathBuf) {
 }
 
 /// Helper: read the rules file back from disk.
-fn read_rules(root: &PathBuf) -> RulesFile {
+fn read_rules(root: &Path) -> RulesFile {
     rules::load_rules(root).unwrap()
 }
 
