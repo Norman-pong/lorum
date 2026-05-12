@@ -87,11 +87,11 @@ enum Commands {
         action: McpAction,
     },
 
-    /// Manage lifecycle hooks.
-    Hook,
-
-    /// Manage skills.
-    Skill,
+    /// Manage project-level AI coding rules.
+    Rule {
+        #[command(subcommand)]
+        action: RuleAction,
+    },
 }
 
 /// Subcommands for the `backup` command.
@@ -150,6 +150,63 @@ enum McpAction {
     },
 }
 
+/// Subcommands for the `rule` command.
+#[derive(clap::Subcommand)]
+enum RuleAction {
+    /// Create an empty .lorum/RULES.md template.
+    Init,
+
+    /// Add a new rule section.
+    Add {
+        /// Section name (## heading).
+        name: String,
+        /// Section content.
+        #[arg(long)]
+        content: String,
+    },
+
+    /// Remove a rule section by name.
+    Remove {
+        /// Section name to remove.
+        name: String,
+    },
+
+    /// Edit an existing rule section's content.
+    Edit {
+        /// Section name to edit.
+        name: String,
+        /// New section content (replaces existing).
+        #[arg(long)]
+        content: String,
+    },
+
+    /// List all rule section names.
+    List,
+
+    /// Display rule content.
+    Show {
+        /// Section name to show (omit to show all).
+        name: Option<String>,
+    },
+
+    /// Synchronise rules to target tools.
+    Sync {
+        /// Show what would change without writing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Only sync the specified tools (defaults to all).
+        #[arg(long = "tools", num_args = 1..)]
+        tools: Vec<String>,
+    },
+
+    /// Import rules from a target tool into .lorum/RULES.md.
+    Import {
+        /// Tool name to import from (cursor, windsurf, codex).
+        #[arg(long = "from")]
+        from: String,
+    },
+}
+
 impl Cli {
     /// Parse CLI arguments and dispatch to the appropriate subcommand.
     fn run(self) -> Result<(), lorum::error::LorumError> {
@@ -200,8 +257,20 @@ impl Cli {
                     self.config.as_deref(),
                 ),
             },
-            Commands::Hook => commands::run_hook(),
-            Commands::Skill => commands::run_skill(),
+            Commands::Rule { action } => match action {
+                RuleAction::Init => commands::rule::run_rule_init(),
+                RuleAction::Add { name, content } => commands::rule::run_rule_add(&name, &content),
+                RuleAction::Remove { name } => commands::rule::run_rule_remove(&name),
+                RuleAction::Edit { name, content } => {
+                    commands::rule::run_rule_edit(&name, &content)
+                }
+                RuleAction::List => commands::rule::run_rule_list(),
+                RuleAction::Show { name } => commands::rule::run_rule_show(name.as_deref()),
+                RuleAction::Sync { dry_run, tools } => {
+                    commands::rule::run_rule_sync(dry_run, &tools)
+                }
+                RuleAction::Import { from } => commands::rule::run_rule_import(&from),
+            },
         }
     }
 }

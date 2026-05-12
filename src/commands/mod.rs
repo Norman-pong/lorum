@@ -12,6 +12,9 @@ pub mod backup_cmds;
 pub mod mcp;
 #[cfg(test)]
 mod mcp_tests;
+pub mod rule;
+#[cfg(test)]
+mod rule_tests;
 #[cfg(test)]
 mod tests;
 
@@ -285,16 +288,4 @@ pub fn run_backup_list(config_path: Option<&str>) -> Result<(), LorumError> {
 /// Run the `backup restore` subcommand.
 pub fn run_backup_restore(tool: &str, config_path: Option<&str>) -> Result<(), LorumError> {
     backup_cmds::run_backup_restore(tool, config_path)
-}
-
-/// Run the `hook` subcommand stub.
-pub fn run_hook() -> Result<(), LorumError> {
-    eprintln!("TODO: implement hook");
-    Ok(())
-}
-
-/// Run the `skill` subcommand stub.
-pub fn run_skill() -> Result<(), LorumError> {
-    eprintln!("TODO: implement skill");
-    Ok(())
 }
