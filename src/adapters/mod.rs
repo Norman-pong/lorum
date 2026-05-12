@@ -1,7 +1,7 @@
 //! Tool adapter framework for reading/writing MCP configurations.
 //!
 //! Each AI coding tool has its own configuration file format and location.
-//! The [`ToolAdapter`] trait provides a uniform interface for reading and
+//! The [`ToolAdapter`](crate::adapters::ToolAdapter) trait provides a uniform interface for reading and
 //! writing MCP server configurations across these tools.
 
 use std::path::PathBuf;

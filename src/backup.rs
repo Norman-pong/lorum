@@ -2,7 +2,7 @@
 //!
 //! Before overwriting a tool's configuration, a backup is created in
 //! `~/.config/lorum/backups/`. Old backups are pruned automatically to
-//! keep at most [`MAX_BACKUPS`] copies per tool.
+//! keep at most 10 copies per tool.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -31,7 +31,7 @@ pub fn backup_dir() -> Result<PathBuf, LorumError> {
 /// taken from the source file's extension (defaults to `"bak"`).
 ///
 /// After creating the backup, old copies are pruned so that at most
-/// [`MAX_BACKUPS`] backups exist for the given tool.
+/// 10 backups exist for the given tool.
 ///
 /// # Errors
 ///

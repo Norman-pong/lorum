@@ -6,16 +6,16 @@
 
 ## Phase 1: MCP 统一管理（优先级最高）
 
-**目标**: 实现 9 个工具的 MCP 服务器配置统一管理。
+**目标**: 实现 5 个工具的 MCP 服务器配置统一管理。
 
 **任务**:
 1. 定义 lorum 统一 MCP 配置 schema（`mcp.servers`）
 2. 实现各平台的配置读写适配器
-3. 实现字段名映射（`mcpServers` / `servers` / `mcp`）
+3. 实现字段名映射（`mcpServers` / `mcp_servers` / `servers` / `[mcp.client]`）
 4. 实现 MCP 服务器的增删改查 CLI 命令
 5. 实现配置同步（单向导出到各工具）
 
-**覆盖工具**: Claude Code、OpenAI Codex、Proma、kimi、opencode、trae、Cursor、Windsurf
+**覆盖工具**: Claude Code、OpenAI Codex、Proma、kimi、trae
 
 **排除**: Continue.dev（独立适配）、Aider（暂不支持）
 
@@ -42,9 +42,9 @@
 **目标**: 统一生命周期钩子管理。
 
 **任务**:
-1. 定义 lorum 统一 Hooks 语法（YAML，以 Claude Code 语义为基准）
+1. 定义 lorum 统一 Hooks 语法（YAML，kebab-case 事件名 + `matcher` 字段，以 Claude Code 语义为基准）
 2. 实现输出翻译器：
-   - → Claude Code `settings.json` hooks（对象结构）
+   - → Claude Code `settings.json` hooks（PascalCase 事件名，支持 5 种 handler 类型）
    - → kimi `config.toml` `[[hooks]]`（数组结构，降级子集）
 3. 实现 Hooks 的增删改查 CLI 命令
 
