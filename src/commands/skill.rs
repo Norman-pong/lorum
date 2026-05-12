@@ -61,6 +61,25 @@ pub fn run_skill_show(name: &str, project_root: Option<&Path>) -> Result<(), Lor
     Ok(())
 }
 
+/// Validate that a skill name is safe to use as a directory name.
+///
+/// Rejects empty names, path separators, and special path components
+/// that could lead to directory traversal.
+fn validate_skill_name(name: &str) -> Result<(), LorumError> {
+    if name.is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+        || name == "."
+        || name == ".."
+        || name.contains("..")
+    {
+        return Err(LorumError::Other {
+            message: format!("invalid skill name: {name}"),
+        });
+    }
+    Ok(())
+}
+
 /// Run the `skill add` subcommand.
 ///
 /// Imports a skill directory into the unified skills directory.
@@ -70,7 +89,22 @@ pub fn run_skill_add(
     from: &str,
     project_root: Option<&Path>,
 ) -> Result<(), LorumError> {
+    validate_skill_name(name)?;
+
     let source = Path::new(from);
+
+    // Verify source directory name matches skill name.
+    if let Some(src_name) = source.file_name().and_then(|n| n.to_str()) {
+        if src_name != name {
+            return Err(LorumError::Other {
+                message: format!(
+                    "source directory name '{}' does not match skill name '{}'",
+                    src_name, name
+                ),
+            });
+        }
+    }
+
     let skill_md = source.join("SKILL.md");
     if !skill_md.exists() {
         return Err(LorumError::Other {
@@ -83,7 +117,7 @@ pub fn run_skill_add(
 
     // Validate frontmatter by parsing.
     let content = std::fs::read_to_string(&skill_md)?;
-    let manifest = crate::skills::parse_skill_manifest(&content)?;
+    let manifest = crate::skills::parse_skill_manifest(&content, &skill_md)?;
     if manifest.name != name {
         return Err(LorumError::Other {
             message: format!(
@@ -110,6 +144,8 @@ pub fn run_skill_add(
 ///
 /// Removes a skill directory from the unified skills directory.
 pub fn run_skill_remove(name: &str, project_root: Option<&Path>) -> Result<(), LorumError> {
+    validate_skill_name(name)?;
+
     let dir = resolve_skills_dir(project_root)?;
     let target = dir.join(name);
 
@@ -158,12 +194,15 @@ pub fn run_skill_sync(
 
 /// Print dry-run results for skills sync in an aligned table.
 fn print_skills_dry_run_results(results: &[SkillsDryRunResult]) {
-    println!("{:<15} {:<8} {:<10} UP TO DATE", "TOOL", "STATUS", "TO UPDATE");
+    println!(
+        "{:<15} {:<8} {:<10} {:<10} TO REMOVE",
+        "TOOL", "STATUS", "TO UPDATE", "UP TO DATE"
+    );
     for r in results {
         let status = if r.success { "OK" } else { "FAIL" };
         println!(
-            "{:<15} {:<8} {:<10} {}",
-            r.tool, status, r.skills_to_update, r.skills_up_to_date
+            "{:<15} {:<8} {:<10} {:<10} {}",
+            r.tool, status, r.skills_to_update, r.skills_up_to_date, r.skills_to_remove
         );
         if let Some(err) = &r.error {
             println!("  error: {err}");

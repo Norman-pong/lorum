@@ -620,6 +620,8 @@ pub struct SkillsDryRunResult {
     pub skills_to_update: usize,
     /// Number of skills that are up to date.
     pub skills_up_to_date: usize,
+    /// Number of skills present in target but absent from source (would be removed).
+    pub skills_to_remove: usize,
     /// Error message if the current skills could not be read.
     pub error: Option<String>,
 }
@@ -718,11 +720,19 @@ fn sync_skills_adapter(
         }
     }
 
+    let total = source_skills.len();
+    let success = synced == total;
+    let error = if success {
+        None
+    } else {
+        Some(format!("only {synced}/{total} skills synced"))
+    };
+
     SkillsSyncResult {
         tool: name,
-        success: true,
+        success,
         skills_synced: synced,
-        error: None,
+        error,
     }
 }
 
@@ -761,6 +771,7 @@ pub fn dry_run_skills_tools(
                     success: false,
                     skills_to_update: 0,
                     skills_up_to_date: 0,
+                    skills_to_remove: 0,
                     error: Some(err.to_string()),
                 });
             }
@@ -784,6 +795,7 @@ fn dry_run_skills_adapter(
                 success: false,
                 skills_to_update: 0,
                 skills_up_to_date: 0,
+                skills_to_remove: 0,
                 error: Some(e.to_string()),
             };
         }
@@ -797,6 +809,7 @@ fn dry_run_skills_adapter(
                 success: false,
                 skills_to_update: 0,
                 skills_up_to_date: 0,
+                skills_to_remove: 0,
                 error: Some(e.to_string()),
             };
         }
@@ -824,11 +837,18 @@ fn dry_run_skills_adapter(
         }
     }
 
+    // Skills present in target but absent from source would be removed during sync.
+    let to_remove = target_skills
+        .iter()
+        .filter(|t| !source_skills.iter().any(|s| s.manifest.name == t.manifest.name))
+        .count();
+
     SkillsDryRunResult {
         tool: name,
         success: true,
         skills_to_update: to_update,
         skills_up_to_date: up_to_date,
+        skills_to_remove: to_remove,
         error: None,
     }
 }

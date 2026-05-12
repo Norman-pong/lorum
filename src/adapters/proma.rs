@@ -234,7 +234,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn skills_adapter_name() {
         let adapter = PromaSkillsAdapter;
         assert_eq!(adapter.name(), "proma");

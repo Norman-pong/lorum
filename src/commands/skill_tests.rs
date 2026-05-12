@@ -78,11 +78,32 @@ fn add_rejects_missing_skill_md() {
 fn add_rejects_name_mismatch() {
     let src = TempDir::new().unwrap();
     let dst = TempDir::new().unwrap();
-    let skill_src = make_skill_dir(src.path(), "real-name");
+    // Directory name matches the CLI name, but frontmatter name differs.
+    let skill_src = src.path().join(".lorum").join("skills").join("wrong-name");
+    std::fs::create_dir_all(&skill_src).unwrap();
+    std::fs::write(
+        skill_src.join("SKILL.md"),
+        "---\nname: real-name\ndescription: \"Test skill\"\n---\n# real-name\n",
+    )
+    .unwrap();
 
     let result = skill::run_skill_add("wrong-name", skill_src.to_str().unwrap(), Some(dst.path()));
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("mismatch"));
+}
+
+#[test]
+fn add_rejects_directory_name_mismatch() {
+    let src = TempDir::new().unwrap();
+    let dst = TempDir::new().unwrap();
+    let skill_src = make_skill_dir(src.path(), "real-name");
+
+    let result = skill::run_skill_add("wrong-name", skill_src.to_str().unwrap(), Some(dst.path()));
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("source directory name"));
 }
 
 #[test]
@@ -106,4 +127,27 @@ fn remove_missing_skill_returns_error() {
     let result = skill::run_skill_remove("missing", Some(dir.path()));
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("skill not found"));
+}
+
+#[test]
+fn add_rejects_path_traversal_name() {
+    let src = TempDir::new().unwrap();
+    let dst = TempDir::new().unwrap();
+    let skill_src = make_skill_dir(src.path(), "safe-name");
+
+    let result = skill::run_skill_add(
+        "../../../etc",
+        skill_src.to_str().unwrap(),
+        Some(dst.path()),
+    );
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("invalid skill name"));
+}
+
+#[test]
+fn remove_rejects_path_traversal_name() {
+    let dir = TempDir::new().unwrap();
+    let result = skill::run_skill_remove("../../../etc", Some(dir.path()));
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("invalid skill name"));
 }

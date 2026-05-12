@@ -52,24 +52,30 @@ pub fn project_skills_dir(project_root: &Path) -> PathBuf {
 ///
 /// Expects the content to start with `---\n`, ending with `---\n`.
 /// Returns the parsed manifest and the full raw content.
-pub fn parse_skill_manifest(content: &str) -> Result<SkillManifest, LorumError> {
+pub fn parse_skill_manifest(content: &str, path: &Path) -> Result<SkillManifest, LorumError> {
     let rest = content
         .strip_prefix("---")
         .ok_or_else(|| LorumError::Other {
-            message: "SKILL.md must start with '---' frontmatter delimiter".into(),
+            message: format!(
+                "{} must start with '---' frontmatter delimiter",
+                path.display()
+            ),
         })?;
 
     // Trim a single leading newline after the opening ---.
     let rest = rest.strip_prefix('\n').unwrap_or(rest);
 
     let end = rest.find("\n---").ok_or_else(|| LorumError::Other {
-        message: "SKILL.md frontmatter must be closed with '---'".into(),
+        message: format!(
+            "{} frontmatter must be closed with '---'",
+            path.display()
+        ),
     })?;
 
     let yaml_str = &rest[..end];
     serde_yaml::from_str(yaml_str).map_err(|e| LorumError::ConfigParse {
         format: "yaml".into(),
-        path: PathBuf::from("SKILL.md"),
+        path: path.to_path_buf(),
         source: Box::new(e),
     })
 }
@@ -99,7 +105,7 @@ pub fn scan_skills_dir(dir: &Path) -> Result<Vec<SkillEntry>, LorumError> {
         }
 
         let content = std::fs::read_to_string(&skill_md)?;
-        let manifest = parse_skill_manifest(&content)?;
+        let manifest = parse_skill_manifest(&content, &skill_md)?;
 
         entries.push(SkillEntry {
             manifest,
@@ -108,13 +114,18 @@ pub fn scan_skills_dir(dir: &Path) -> Result<Vec<SkillEntry>, LorumError> {
         });
     }
 
-    entries.sort_by(|a, b| a.manifest.name.cmp(&b.manifest.name));
+    entries.sort_by(|a, b| {
+        let a_name = a.dir_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let b_name = b.dir_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        a_name.cmp(b_name)
+    });
     Ok(entries)
 }
 
 /// Recursively copy a directory tree from `src` to `dst`.
 ///
 /// Creates `dst` if it does not exist. Existing files are overwritten.
+/// Symlinks are skipped to avoid infinite recursion.
 pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), LorumError> {
     std::fs::create_dir_all(dst)?;
 
@@ -123,10 +134,21 @@ pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), LorumError> {
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
 
+        let metadata = std::fs::symlink_metadata(&src_path)
+            .map_err(|e| LorumError::Io { source: e })?;
+
+        if metadata.file_type().is_symlink() {
+            continue; // Skip symlinks to avoid infinite recursion
+        }
+
         if src_path.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else {
             std::fs::copy(&src_path, &dst_path)?;
+            // Also preserve permissions
+            let perms = metadata.permissions();
+            std::fs::set_permissions(&dst_path, perms)
+                .map_err(|e| LorumError::Io { source: e })?;
         }
     }
     Ok(())
@@ -140,7 +162,7 @@ mod tests {
     fn parse_valid_frontmatter() {
         let content =
             "---\nname: my-skill\ndescription: \"A test skill\"\n---\n# My Skill\nBody here.\n";
-        let manifest = parse_skill_manifest(content).unwrap();
+        let manifest = parse_skill_manifest(content, Path::new("SKILL.md")).unwrap();
         assert_eq!(manifest.name, "my-skill");
         assert_eq!(manifest.description, "A test skill");
     }
@@ -148,13 +170,13 @@ mod tests {
     #[test]
     fn parse_frontmatter_missing_open() {
         let content = "name: my-skill\n---\nBody\n";
-        assert!(parse_skill_manifest(content).is_err());
+        assert!(parse_skill_manifest(content, Path::new("SKILL.md")).is_err());
     }
 
     #[test]
     fn parse_frontmatter_missing_close() {
         let content = "---\nname: my-skill\nBody\n";
-        assert!(parse_skill_manifest(content).is_err());
+        assert!(parse_skill_manifest(content, Path::new("SKILL.md")).is_err());
     }
 
     #[test]
@@ -214,5 +236,24 @@ mod tests {
         assert!(dst_skill.join("scripts/run.sh").exists());
         let content = std::fs::read_to_string(dst_skill.join("scripts/run.sh")).unwrap();
         assert_eq!(content, "#!/bin/sh\necho hi\n");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn copy_dir_recursive_skips_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+
+        std::fs::write(src.path().join("SKILL.md"), "---\nname: t\n---\n").unwrap();
+        // Create a symlink pointing back to the parent directory (would cause infinite recursion)
+        symlink(src.path(), src.path().join("loop")).unwrap();
+
+        let dst_skill = dst.path().join("t");
+        copy_dir_recursive(src.path(), &dst_skill).unwrap();
+
+        assert!(dst_skill.join("SKILL.md").exists());
+        assert!(!dst_skill.join("loop").exists());
     }
 }
