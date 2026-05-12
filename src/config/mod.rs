@@ -10,6 +10,16 @@ use std::path::{Path, PathBuf};
 
 use crate::error::LorumError;
 
+/// Output format for configuration display.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub enum OutputFormat {
+    /// YAML output (default).
+    #[default]
+    Yaml,
+    /// JSON output.
+    Json,
+}
+
 /// Single MCP server configuration entry.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct McpServer {

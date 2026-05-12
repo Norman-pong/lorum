@@ -195,7 +195,14 @@ fn config_outputs_yaml() {
     let (_dir, config_path) = setup_temp_config(Some(&initial));
 
     // run_config with explicit path should output valid yaml
-    super::run_config(false, false, false, Some(&path_str(&config_path))).unwrap();
+    super::run_config(
+        false,
+        false,
+        false,
+        crate::config::OutputFormat::Yaml,
+        Some(&path_str(&config_path)),
+    )
+    .unwrap();
 }
 
 #[test]
@@ -204,7 +211,7 @@ fn config_local_missing_returns_error() {
     let orig = std::env::current_dir().unwrap();
     std::env::set_current_dir(dir.path()).unwrap();
 
-    let result = super::run_config(false, true, false, None);
+    let result = super::run_config(false, true, false, crate::config::OutputFormat::Yaml, None);
 
     std::env::set_current_dir(&orig).unwrap();
     assert!(result.is_err());

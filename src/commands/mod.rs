@@ -580,27 +580,37 @@ fn skills_status(name: &str) -> Option<usize> {
     adapter.read_skills().map(|s| s.len()).ok()
 }
 
-/// Run the `config` subcommand: outputs resolved configuration as YAML.
+/// Run the `config` subcommand: outputs resolved configuration.
 pub fn run_config(
     resolve_env: bool,
     local: bool,
     global: bool,
+    format: config::OutputFormat,
     config_path: Option<&str>,
 ) -> Result<(), LorumError> {
-    let config = if let Some(p) = config_path {
-        config::load_config(std::path::Path::new(p))?
+    let (config, source) = if let Some(p) = config_path {
+        (
+            config::load_config(std::path::Path::new(p))?,
+            format!("file: {p}"),
+        )
     } else if global {
         let path = config::global_config_path()?;
-        load_config_or_default(&path)?
+        (
+            load_config_or_default(&path)?,
+            format!("global: {}", path.display()),
+        )
     } else if local {
         let cwd = std::env::current_dir()?;
         match config::find_project_config(&cwd) {
             Some(p) => {
                 let proj = config::load_project_config(&p)?;
-                config::LorumConfig {
-                    mcp: proj.mcp,
-                    hooks: proj.hooks,
-                }
+                (
+                    config::LorumConfig {
+                        mcp: proj.mcp,
+                        hooks: proj.hooks,
+                    },
+                    format!("local: {}", p.display()),
+                )
             }
             None => {
                 return Err(LorumError::ConfigNotFound {
@@ -609,22 +619,40 @@ pub fn run_config(
             }
         }
     } else {
-        config::resolve_effective_config_from_cwd(None)?
+        let path = config::global_config_path()?;
+        let cfg = config::resolve_effective_config_from_cwd(None)?;
+        let cwd = std::env::current_dir()?;
+        let source = if config::find_project_config(&cwd).is_some() {
+            format!("merged: global ({}) + local project", path.display())
+        } else {
+            format!("global: {}", path.display())
+        };
+        (cfg, source)
     };
 
     let output = if resolve_env {
         let mcp = crate::env_interpolate::interpolate_mcp_config(&config.mcp, true);
-        config::LorumConfig {
-            mcp,
-            hooks: config.hooks,
-        }
+        let hooks = crate::env_interpolate::interpolate_hooks_config(&config.hooks, true);
+        config::LorumConfig { mcp, hooks }
     } else {
         config
     };
-    let yaml = serde_yaml::to_string(&output).map_err(|e| LorumError::Other {
-        message: format!("failed to serialize config: {e}"),
-    })?;
-    print!("{yaml}");
+
+    match format {
+        config::OutputFormat::Yaml => {
+            let yaml = serde_yaml::to_string(&output).map_err(|e| LorumError::Other {
+                message: format!("failed to serialize config: {e}"),
+            })?;
+            println!("# Source: {source}");
+            print!("{yaml}");
+        }
+        config::OutputFormat::Json => {
+            let json = serde_json::to_string_pretty(&output).map_err(|e| LorumError::Other {
+                message: format!("failed to serialize config: {e}"),
+            })?;
+            println!("{json}");
+        }
+    }
     Ok(())
 }
 

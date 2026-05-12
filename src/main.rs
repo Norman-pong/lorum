@@ -85,6 +85,10 @@ enum Commands {
         /// Show the global (user-level) configuration.
         #[arg(long)]
         global: bool,
+
+        /// Output format (yaml or json).
+        #[arg(long = "format", default_value = "yaml")]
+        format: String,
     },
 
     /// Manage configuration backups.
@@ -369,7 +373,19 @@ impl Cli {
                 resolve_env,
                 local,
                 global,
-            }) => commands::run_config(resolve_env, local, global, self.config.as_deref()),
+                format,
+            }) => {
+                let fmt = match format.as_str() {
+                    "json" => lorum::config::OutputFormat::Json,
+                    "yaml" => lorum::config::OutputFormat::Yaml,
+                    other => {
+                        return Err(lorum::error::LorumError::Other {
+                            message: format!("invalid format '{other}', expected 'yaml' or 'json'"),
+                        });
+                    }
+                };
+                commands::run_config(resolve_env, local, global, fmt, self.config.as_deref())
+            }
             Some(Commands::Backup { action }) => match action {
                 BackupAction::List => commands::run_backup_list(self.config.as_deref()),
                 BackupAction::Create { tools, all } => {
