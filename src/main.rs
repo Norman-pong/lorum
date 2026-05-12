@@ -45,6 +45,10 @@ enum Commands {
         /// Name of the tool to import from (e.g. "claude-code", "codex").
         #[arg(long = "from")]
         from: String,
+
+        /// Show what would be imported without writing anything.
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Synchronise MCP configuration across tools.
@@ -338,7 +342,9 @@ impl Cli {
             Some(Commands::Init { local, yes }) => {
                 commands::run_init(self.config.as_deref(), local, yes)
             }
-            Some(Commands::Import { from }) => commands::run_import(&from, self.config.as_deref()),
+            Some(Commands::Import { from, dry_run }) => {
+                commands::run_import(&from, dry_run, self.config.as_deref())
+            }
             Some(Commands::Sync {
                 dry_run,
                 tools,

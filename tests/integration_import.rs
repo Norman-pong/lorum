@@ -236,3 +236,120 @@ API_KEY = "test-key"
     let loaded = load_config(&lorum_path).unwrap();
     assert!(loaded.mcp.servers.contains_key("context7"));
 }
+
+// ---------------------------------------------------------------------------
+// Verify all_adapter_tool_names returns union of all dimensions
+// ---------------------------------------------------------------------------
+
+#[test]
+fn all_adapter_tool_names_returns_union() {
+    let names = lorum::adapters::all_adapter_tool_names();
+    // Should include MCP adapters
+    assert!(names.iter().any(|n| n == "claude-code"));
+    assert!(names.iter().any(|n| n == "codex"));
+    // Should include rules adapters (cursor, windsurf)
+    assert!(names.iter().any(|n| n == "cursor"));
+    assert!(names.iter().any(|n| n == "windsurf"));
+    // Should include hooks adapters (claude-code, kimi)
+    assert!(names.iter().any(|n| n == "kimi"));
+    // Should include skills adapters (claude-code, proma)
+    assert!(names.iter().any(|n| n == "proma"));
+    // Should be deduplicated
+    let unique: std::collections::HashSet<_> = names.iter().collect();
+    assert_eq!(unique.len(), names.len());
+}
+
+// ---------------------------------------------------------------------------
+// Import dry-run does not write any files
+// ---------------------------------------------------------------------------
+
+#[test]
+fn import_dry_run_does_not_create_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.yaml");
+    let path_s = config_path.to_str().unwrap();
+
+    lorum::commands::run_import("all", true, Some(path_s)).unwrap();
+
+    assert!(!config_path.exists());
+}
+
+// ---------------------------------------------------------------------------
+// Import rules from a tool creates .lorum/RULES.md
+// ---------------------------------------------------------------------------
+
+#[test]
+fn import_rules_from_tool_creates_rules_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.yaml");
+    let path_s = config_path.to_str().unwrap();
+
+    // Create a .cursorrules file in the temp directory
+    let cursorrules = dir.path().join(".cursorrules");
+    fs::write(&cursorrules, "## Style\nAlways use rustfmt.\n").unwrap();
+
+    let orig = std::env::current_dir().unwrap();
+    std::env::set_current_dir(dir.path()).unwrap();
+
+    let result = std::panic::catch_unwind(|| {
+        lorum::commands::run_import("cursor", false, Some(path_s)).unwrap();
+    });
+
+    std::env::set_current_dir(&orig).unwrap();
+    result.unwrap();
+
+    // Verify RULES.md was created
+    let rules_path = dir.path().join(".lorum").join("RULES.md");
+    assert!(rules_path.exists());
+    let content = fs::read_to_string(&rules_path).unwrap();
+    assert!(content.contains("Style"));
+    assert!(content.contains("Always use rustfmt."));
+}
+
+// ---------------------------------------------------------------------------
+// Import rules merge: existing sections are preserved, new ones appended
+// ---------------------------------------------------------------------------
+
+#[test]
+fn import_rules_merges_without_overwriting_existing() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.yaml");
+    let path_s = config_path.to_str().unwrap();
+
+    // Pre-create .lorum/RULES.md with an existing section
+    let lorum_dir = dir.path().join(".lorum");
+    fs::create_dir_all(&lorum_dir).unwrap();
+    let rules_md = lorum_dir.join("RULES.md");
+    fs::write(
+        &rules_md,
+        "# Project Rules\n\n## Style\nExisting style rule.\n",
+    )
+    .unwrap();
+
+    // Create a .cursorrules with a different section and same-name section
+    let cursorrules = dir.path().join(".cursorrules");
+    fs::write(
+        &cursorrules,
+        "## Style\nNew style rule (should be ignored).\n## Testing\nRun tests.\n",
+    )
+    .unwrap();
+
+    let orig = std::env::current_dir().unwrap();
+    std::env::set_current_dir(dir.path()).unwrap();
+
+    let result = std::panic::catch_unwind(|| {
+        lorum::commands::run_import("cursor", false, Some(path_s)).unwrap();
+    });
+
+    std::env::set_current_dir(&orig).unwrap();
+    result.unwrap();
+
+    let content = fs::read_to_string(&rules_md).unwrap();
+    // Existing "Style" section should be preserved
+    assert!(content.contains("Existing style rule."));
+    // New "Testing" section should be appended
+    assert!(content.contains("Testing"));
+    assert!(content.contains("Run tests."));
+    // The new "Style" content should NOT overwrite the existing one
+    assert!(!content.contains("New style rule (should be ignored)."));
+}

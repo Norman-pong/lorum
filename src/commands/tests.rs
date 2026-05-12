@@ -107,7 +107,7 @@ fn init_skips_existing_config() {
 fn import_from_nonexistent_adapter_returns_error() {
     let (_dir, config_path) = setup_temp_config(None);
 
-    let result = super::run_import("nonexistent-tool", Some(&path_str(&config_path)));
+    let result = super::run_import("nonexistent-tool", false, Some(&path_str(&config_path)));
     assert!(result.is_err());
 }
 
@@ -118,7 +118,7 @@ fn import_creates_config_if_missing() {
     let path_s = config_path.to_str().unwrap().to_string();
 
     // import from "all" should succeed even with no existing config file
-    super::run_import("all", Some(&path_s)).unwrap();
+    super::run_import("all", false, Some(&path_s)).unwrap();
 
     assert!(config_path.exists());
 }

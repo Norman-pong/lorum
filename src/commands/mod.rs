@@ -90,44 +90,169 @@ fn detect_installed_tools() -> Vec<String> {
     }
     tools
 }
-/// Run the `import` subcommand: reads MCP config from tools and merges.
-pub fn run_import(from: &str, config_path: Option<&str>) -> Result<(), LorumError> {
+/// Summary of importing from a single tool across all supported dimensions.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ImportSummary {
+    tool: String,
+    mcp_servers: usize,
+    hook_handlers: usize,
+    rules_sections: usize,
+    errors: Vec<String>,
+}
+
+/// Run the `import` subcommand: reads configuration from tools and merges.
+///
+/// Supports importing across three dimensions: MCP servers, hooks, and rules.
+/// When `from` is `"all"`, every registered tool is queried. If `dry_run` is
+/// true, no files are written — only a preview is printed.
+///
+/// # Errors
+///
+/// - [`LorumError::AdapterNotFound`] if `from` names a tool with no adapter
+///   in any dimension and `from` is not `"all"`.
+/// - [`LorumError::ConfigWrite`] if saving the merged configuration fails.
+pub fn run_import(from: &str, dry_run: bool, config_path: Option<&str>) -> Result<(), LorumError> {
     let path = resolve_path(config_path)?;
     let mut lorum_config = load_config_or_default(&path)?;
 
-    let adapters = if from == "all" {
-        crate::adapters::all_adapters()
+    let tool_names: Vec<String> = if from == "all" {
+        crate::adapters::all_adapter_tool_names()
     } else {
-        vec![
-            crate::adapters::find_adapter(from)
-                .ok_or_else(|| LorumError::AdapterNotFound { name: from.into() })?,
-        ]
+        let known = crate::adapters::all_adapter_tool_names();
+        if !known.iter().any(|n| n == from) {
+            return Err(LorumError::AdapterNotFound { name: from.into() });
+        }
+        vec![from.to_string()]
     };
 
-    let mut total_imported = 0;
-    for adapter in adapters {
-        match adapter.read_mcp() {
-            Ok(mcp) => {
-                for (name, server) in &mcp.servers {
-                    lorum_config
-                        .mcp
-                        .servers
-                        .insert(name.clone(), server.clone());
-                    total_imported += 1;
+    let mut summaries: Vec<ImportSummary> = Vec::new();
+
+    for tool_name in &tool_names {
+        let mut summary = ImportSummary {
+            tool: tool_name.clone(),
+            mcp_servers: 0,
+            hook_handlers: 0,
+            rules_sections: 0,
+            errors: Vec::new(),
+        };
+
+        // MCP dimension
+        if let Some(adapter) = crate::adapters::find_adapter(tool_name) {
+            match adapter.read_mcp() {
+                Ok(mcp) => {
+                    summary.mcp_servers = mcp.servers.len();
+                    if !dry_run {
+                        for (name, server) in &mcp.servers {
+                            lorum_config
+                                .mcp
+                                .servers
+                                .insert(name.clone(), server.clone());
+                        }
+                    }
                 }
-                println!(
-                    "imported {} servers from {}",
-                    mcp.servers.len(),
-                    adapter.name()
-                );
+                Err(e) => summary.errors.push(format!("mcp: {e}")),
             }
-            Err(e) => eprintln!("warning: failed to read from {}: {e}", adapter.name()),
+        }
+
+        // Hooks dimension
+        if let Some(adapter) = crate::adapters::find_hooks_adapter(tool_name) {
+            match adapter.read_hooks() {
+                Ok(hooks) => {
+                    summary.hook_handlers = hooks.events.values().map(|v| v.len()).sum();
+                    if !dry_run {
+                        for (event, handlers) in &hooks.events {
+                            lorum_config
+                                .hooks
+                                .events
+                                .insert(event.clone(), handlers.clone());
+                        }
+                    }
+                }
+                Err(e) => summary.errors.push(format!("hooks: {e}")),
+            }
+        }
+
+        // Rules dimension
+        if let Some(adapter) = crate::adapters::find_rules_adapter(tool_name) {
+            let cwd = std::env::current_dir().map_err(|e| LorumError::Io { source: e })?;
+            match adapter.read_rules(&cwd) {
+                Ok(Some(content)) => {
+                    let imported = crate::rules::parse_rules(&content);
+                    summary.rules_sections = imported.sections.len();
+                    if !dry_run {
+                        let mut existing = match crate::rules::load_rules(&cwd) {
+                            Ok(rules) => rules,
+                            Err(LorumError::ConfigNotFound { .. }) => crate::rules::RulesFile {
+                                preamble: crate::rules::DEFAULT_PREAMBLE.to_string(),
+                                sections: Vec::new(),
+                            },
+                            Err(e) => return Err(e),
+                        };
+                        let existing_names: std::collections::HashSet<String> =
+                            existing.sections.iter().map(|s| s.name.clone()).collect();
+                        for section in imported.sections {
+                            if !existing_names.contains(&section.name) {
+                                existing.sections.push(section);
+                            }
+                        }
+                        crate::rules::save_rules(&cwd, &existing)?;
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => summary.errors.push(format!("rules: {e}")),
+            }
+        }
+
+        if summary.mcp_servers > 0
+            || summary.hook_handlers > 0
+            || summary.rules_sections > 0
+            || !summary.errors.is_empty()
+        {
+            summaries.push(summary);
         }
     }
 
-    config::save_config(&path, &lorum_config)?;
-    println!("imported {total_imported} servers total");
+    if dry_run {
+        print_import_preview(&summaries);
+    } else {
+        config::save_config(&path, &lorum_config)?;
+        print_import_results(&summaries);
+    }
+
     Ok(())
+}
+
+fn print_import_preview(summaries: &[ImportSummary]) {
+    println!(
+        "{:<15} {:>6} {:>6} {:>6} ERRORS",
+        "TOOL", "MCP", "HOOKS", "RULES"
+    );
+    for s in summaries {
+        let errors = if s.errors.is_empty() {
+            "".to_string()
+        } else {
+            s.errors.join(", ")
+        };
+        println!(
+            "{:<15} {:>6} {:>6} {:>6} {}",
+            s.tool, s.mcp_servers, s.hook_handlers, s.rules_sections, errors
+        );
+    }
+}
+
+fn print_import_results(summaries: &[ImportSummary]) {
+    let total_mcp: usize = summaries.iter().map(|s| s.mcp_servers).sum();
+    let total_hooks: usize = summaries.iter().map(|s| s.hook_handlers).sum();
+    let total_rules: usize = summaries.iter().map(|s| s.rules_sections).sum();
+    for s in summaries {
+        println!(
+            "imported {} mcp servers, {} hook handlers, {} rules sections from {}",
+            s.mcp_servers, s.hook_handlers, s.rules_sections, s.tool
+        );
+    }
+    println!(
+        "imported {total_mcp} servers, {total_hooks} hook handlers, {total_rules} rules sections total"
+    );
 }
 
 /// Run the `sync` subcommand: synchronises (or dry-runs) MCP configuration.

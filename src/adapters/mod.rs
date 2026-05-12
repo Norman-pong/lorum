@@ -194,6 +194,26 @@ pub fn find_skills_adapter(name: &str) -> Option<Box<dyn SkillsAdapter>> {
     all_skills_adapters().into_iter().find(|a| a.name() == name)
 }
 
+/// Return the union of all tool names registered across all four adapter dimensions.
+///
+/// Each tool name appears at most once in the returned vector.
+pub fn all_adapter_tool_names() -> Vec<String> {
+    let mut names = std::collections::BTreeSet::new();
+    for a in all_adapters() {
+        names.insert(a.name().to_string());
+    }
+    for a in all_rules_adapters() {
+        names.insert(a.name().to_string());
+    }
+    for a in all_hooks_adapters() {
+        names.insert(a.name().to_string());
+    }
+    for a in all_skills_adapters() {
+        names.insert(a.name().to_string());
+    }
+    names.into_iter().collect()
+}
+
 /// Convert a kebab-case string to PascalCase.
 ///
 /// # Examples
