@@ -1,6 +1,7 @@
 //! Unit tests for the sync engine.
 
 use super::*;
+use crate::adapters::RulesAdapter;
 use crate::adapters::test_utils::make_server;
 
 #[allow(clippy::type_complexity)]
@@ -12,6 +13,10 @@ fn make_config(entries: &[(&str, &str, &[&str], &[(&str, &str)])]) -> McpConfig 
             .collect(),
     }
 }
+
+// ---------------------------------------------------------------------------
+// MCP sync tests
+// ---------------------------------------------------------------------------
 
 #[test]
 fn compute_diff_empty_to_empty() {
@@ -120,4 +125,169 @@ fn config_diff_is_empty_true_when_no_changes() {
         unchanged: vec!["x".into()],
     };
     assert!(diff.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Rules sync tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sync_rules_all_writes_to_all_adapters() {
+    let dir = tempfile::tempdir().unwrap();
+    let content = "Use 4-space indentation.\n";
+    let results = sync_rules_all(dir.path(), content);
+
+    // Every registered rules adapter should have a result.
+    assert_eq!(results.len(), all_rules_adapters().len());
+
+    // All should succeed (temp dir is writable).
+    for result in &results {
+        assert!(
+            result.success,
+            "tool {} failed: {:?}",
+            result.tool, result.error
+        );
+        assert!(result.error.is_none());
+    }
+
+    // Verify files were actually written by reading via the adapters.
+    for adapter in all_rules_adapters() {
+        let read = adapter.read_rules(dir.path()).unwrap();
+        assert_eq!(
+            read,
+            Some(content.to_owned()),
+            "content mismatch for {}",
+            adapter.name()
+        );
+    }
+}
+
+#[test]
+fn sync_rules_tools_only_writes_specified_tools() {
+    let dir = tempfile::tempdir().unwrap();
+    let content = "Prefer functional style.\n";
+
+    let results = sync_rules_tools(dir.path(), content, &["cursor".into()]);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].tool, "cursor");
+    assert!(results[0].success);
+
+    // Cursor should have the content.
+    let cursor = crate::adapters::cursor::CursorRulesAdapter;
+    let read = cursor.read_rules(dir.path()).unwrap();
+    assert_eq!(read, Some(content.to_owned()));
+}
+
+#[test]
+fn sync_rules_tools_unknown_tool_returns_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let results = sync_rules_tools(dir.path(), "content", &["nonexistent-tool".into()]);
+    assert_eq!(results.len(), 1);
+    assert!(!results[0].success);
+    assert!(results[0].error.is_some());
+    assert!(
+        results[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("adapter not found")
+    );
+}
+
+#[test]
+fn dry_run_rules_all_detects_needs_update() {
+    let dir = tempfile::tempdir().unwrap();
+    let content = "New rules content.\n";
+
+    // No files exist yet -- every adapter should need an update.
+    let results = dry_run_rules_all(dir.path(), content);
+    assert_eq!(results.len(), all_rules_adapters().len());
+    for result in &results {
+        assert!(result.success);
+        assert!(
+            result.needs_update,
+            "tool {} should need update",
+            result.tool
+        );
+    }
+}
+
+#[test]
+fn dry_run_rules_reports_no_update_when_content_matches() {
+    let dir = tempfile::tempdir().unwrap();
+    let content = "Existing rules content.\n";
+
+    // Write content via the cursor adapter so one tool has matching content.
+    let cursor = crate::adapters::cursor::CursorRulesAdapter;
+    cursor.write_rules(dir.path(), content).unwrap();
+
+    // Dry-run for just cursor -- should report no update needed.
+    let results = dry_run_rules_tools(dir.path(), content, &["cursor".into()]);
+    assert_eq!(results.len(), 1);
+    assert!(results[0].success);
+    assert!(!results[0].needs_update);
+}
+
+#[test]
+fn dry_run_rules_detects_update_when_content_differs() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // Write old content.
+    let cursor = crate::adapters::cursor::CursorRulesAdapter;
+    cursor.write_rules(dir.path(), "old content").unwrap();
+
+    // Dry-run with different content -- should report update needed.
+    let results = dry_run_rules_tools(dir.path(), "new content", &["cursor".into()]);
+    assert_eq!(results.len(), 1);
+    assert!(results[0].success);
+    assert!(results[0].needs_update);
+}
+
+#[test]
+fn dry_run_rules_tools_unknown_tool_returns_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let results = dry_run_rules_tools(dir.path(), "content", &["nonexistent-tool".into()]);
+    assert_eq!(results.len(), 1);
+    assert!(!results[0].success);
+    assert!(results[0].error.is_some());
+    assert!(
+        results[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("adapter not found")
+    );
+}
+
+#[test]
+fn sync_rules_creates_backup_when_file_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let cursor = crate::adapters::cursor::CursorRulesAdapter;
+    let rules_path = cursor.rules_path(dir.path());
+
+    // Write initial content.
+    let old_content = "Old rules.\n";
+    cursor.write_rules(dir.path(), old_content).unwrap();
+    assert!(rules_path.exists());
+
+    // Sync new content -- should create a backup.
+    let new_content = "New rules.\n";
+    let results = sync_rules_tools(dir.path(), new_content, &["cursor".into()]);
+    assert_eq!(results.len(), 1);
+    assert!(results[0].success);
+
+    // File should now contain new content.
+    let read = cursor.read_rules(dir.path()).unwrap();
+    assert_eq!(read, Some(new_content.to_owned()));
+
+    // A backup should have been created.
+    let backups = crate::backup::list_backups("cursor").unwrap();
+    assert!(
+        !backups.is_empty(),
+        "expected at least one backup for cursor"
+    );
+
+    // The backup should contain the old content.
+    let backup_content = std::fs::read_to_string(&backups[0]).unwrap();
+    assert_eq!(backup_content, old_content);
 }

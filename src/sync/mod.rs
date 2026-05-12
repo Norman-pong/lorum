@@ -1,9 +1,17 @@
-//! Synchronisation engine for MCP configurations.
+//! Synchronisation engine for MCP configurations and rules files.
 //!
 //! The sync engine copies the unified MCP configuration to every registered
 //! tool adapter. Each adapter's [`write_mcp`](crate::adapters::ToolAdapter::write_mcp)
 //! method is called, and a [`SyncResult`] is produced per tool so that a
 //! single failure does not block the others.
+//!
+//! # Rules sync
+//!
+//! The engine also supports syncing rules content to all registered
+//! [`RulesAdapter`](crate::adapters::RulesAdapter) instances via
+//! [`sync_rules_all`] and [`sync_rules_tools`]. The dry-run counterparts
+//! [`dry_run_rules_all`] and [`dry_run_rules_tools`] preview which tools
+//! need an update without writing anything.
 //!
 //! # Dry-run mode
 //!
@@ -11,7 +19,11 @@
 //! It compares each tool's current configuration against the target and
 //! reports the diff via [`ConfigDiff`].
 
-use crate::adapters::{ToolAdapter, all_adapters, find_adapter};
+use std::path::Path;
+
+use crate::adapters::{
+    ToolAdapter, all_adapters, all_rules_adapters, find_adapter, find_rules_adapter,
+};
 use crate::config::McpConfig;
 use crate::error::LorumError;
 
@@ -228,6 +240,185 @@ pub fn compute_diff(current: &McpConfig, target: &McpConfig) -> ConfigDiff {
         modified,
         unchanged,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Rules sync
+// ---------------------------------------------------------------------------
+
+/// Result of syncing rules to a single tool.
+#[derive(Debug)]
+pub struct RulesSyncResult {
+    /// Name of the tool that was synced.
+    pub tool: String,
+    /// Whether the sync succeeded.
+    pub success: bool,
+    /// Error message if the sync failed.
+    pub error: Option<String>,
+}
+
+/// Result of a dry-run preview for rules syncing.
+#[derive(Debug)]
+pub struct RulesDryRunResult {
+    /// Name of the tool.
+    pub tool: String,
+    /// Whether the current rules could be read successfully.
+    pub success: bool,
+    /// Whether the current content differs from the target content.
+    pub needs_update: bool,
+    /// Error message if the current rules could not be read.
+    pub error: Option<String>,
+}
+
+/// Sync rules content to all registered rules adapters.
+///
+/// Each adapter is synced independently; a failure for one tool does not
+/// affect the others. Before writing, the existing file (if any) is backed
+/// up via [`crate::backup::create_backup`].
+pub fn sync_rules_all(project_root: &Path, content: &str) -> Vec<RulesSyncResult> {
+    let mut results = Vec::new();
+    for adapter in all_rules_adapters() {
+        let result = sync_rules_adapter(&*adapter, project_root, content);
+        results.push(result);
+    }
+    results
+}
+
+/// Sync rules content to specified tools only.
+///
+/// Tools that are not found in the registered rules adapters produce a failed
+/// [`RulesSyncResult`] with an appropriate error message.
+pub fn sync_rules_tools(
+    project_root: &Path,
+    content: &str,
+    tool_names: &[String],
+) -> Vec<RulesSyncResult> {
+    let mut results = Vec::new();
+    for name in tool_names {
+        match find_rules_adapter(name) {
+            Some(adapter) => {
+                let result = sync_rules_adapter(&*adapter, project_root, content);
+                results.push(result);
+            }
+            None => {
+                let err = LorumError::AdapterNotFound { name: name.clone() };
+                results.push(RulesSyncResult {
+                    tool: name.clone(),
+                    success: false,
+                    error: Some(err.to_string()),
+                });
+            }
+        }
+    }
+    results
+}
+
+/// Sync a single rules adapter.
+///
+/// Backs up the existing file (if present) before writing.
+fn sync_rules_adapter(
+    adapter: &dyn crate::adapters::RulesAdapter,
+    project_root: &Path,
+    content: &str,
+) -> RulesSyncResult {
+    let name = adapter.name().to_string();
+    let path = adapter.rules_path(project_root);
+
+    // Backup existing file before overwriting.
+    if path.exists() {
+        if let Err(e) = crate::backup::create_backup(&name, &path) {
+            // Backup failure should not block the sync, but log a warning.
+            eprintln!("warning: failed to backup {}: {e}", path.display());
+        }
+    }
+
+    match adapter.write_rules(project_root, content) {
+        Ok(()) => RulesSyncResult {
+            tool: name,
+            success: true,
+            error: None,
+        },
+        Err(e) => RulesSyncResult {
+            tool: name,
+            success: false,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+/// Preview rules sync results without writing anything.
+///
+/// For each registered rules adapter, reads the current rules file and
+/// compares it against the target content. No files are modified.
+pub fn dry_run_rules_all(project_root: &Path, content: &str) -> Vec<RulesDryRunResult> {
+    let mut results = Vec::new();
+    for adapter in all_rules_adapters() {
+        let name = adapter.name().to_string();
+        match adapter.read_rules(project_root) {
+            Ok(current) => {
+                let needs_update = current.as_deref() != Some(content);
+                results.push(RulesDryRunResult {
+                    tool: name,
+                    success: true,
+                    needs_update,
+                    error: None,
+                });
+            }
+            Err(e) => results.push(RulesDryRunResult {
+                tool: name,
+                success: false,
+                needs_update: false,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+    results
+}
+
+/// Preview rules sync results for specified tools only.
+///
+/// Tools that are not found in the registered rules adapters produce a failed
+/// [`RulesDryRunResult`] with an appropriate error message.
+pub fn dry_run_rules_tools(
+    project_root: &Path,
+    content: &str,
+    tool_names: &[String],
+) -> Vec<RulesDryRunResult> {
+    let mut results = Vec::new();
+    for name in tool_names {
+        match find_rules_adapter(name) {
+            Some(adapter) => {
+                let adapter_name = adapter.name().to_string();
+                match adapter.read_rules(project_root) {
+                    Ok(current) => {
+                        let needs_update = current.as_deref() != Some(content);
+                        results.push(RulesDryRunResult {
+                            tool: adapter_name,
+                            success: true,
+                            needs_update,
+                            error: None,
+                        });
+                    }
+                    Err(e) => results.push(RulesDryRunResult {
+                        tool: adapter_name,
+                        success: false,
+                        needs_update: false,
+                        error: Some(e.to_string()),
+                    }),
+                }
+            }
+            None => {
+                let err = LorumError::AdapterNotFound { name: name.clone() };
+                results.push(RulesDryRunResult {
+                    tool: name.clone(),
+                    success: false,
+                    needs_update: false,
+                    error: Some(err.to_string()),
+                });
+            }
+        }
+    }
+    results
 }
 
 #[cfg(test)]
