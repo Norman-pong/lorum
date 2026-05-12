@@ -299,7 +299,7 @@ fn test_rule_sync_creates_backup() {
 
     // Verify the backup contains the old content.
     let latest_backup = &backups[0];
-    let backup_content = fs::read_to_string(latest_backup).unwrap();
+    let backup_content = fs::read_to_string(&latest_backup.path).unwrap();
     assert_eq!(backup_content, old_content);
 
     // Verify the new content overwrote the old file.

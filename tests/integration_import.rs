@@ -1,6 +1,7 @@
 //! Import integration tests: verify adapters can read configs and the
 //! results can be saved via the public config API.
 
+use serial_test::serial;
 use std::collections::BTreeMap;
 use std::fs;
 
@@ -264,6 +265,7 @@ fn all_adapter_tool_names_returns_union() {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[serial]
 fn import_dry_run_does_not_create_config() {
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.yaml");
@@ -279,6 +281,7 @@ fn import_dry_run_does_not_create_config() {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[serial]
 fn import_rules_from_tool_creates_rules_file() {
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.yaml");
@@ -311,6 +314,7 @@ fn import_rules_from_tool_creates_rules_file() {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[serial]
 fn import_rules_merges_without_overwriting_existing() {
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.yaml");

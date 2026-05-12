@@ -222,14 +222,14 @@ fn backup_list_no_backups() {
 
 #[test]
 fn backup_restore_nonexistent_adapter_returns_error() {
-    let result = super::run_backup_restore("nonexistent-tool", None);
+    let result = super::run_backup_restore("nonexistent-tool", None, None);
     assert!(result.is_err());
 }
 
 #[test]
 fn backup_restore_no_backup_returns_error() {
     // claude-code adapter exists but likely has no backups
-    let result = super::run_backup_restore("claude-code", None);
+    let result = super::run_backup_restore("claude-code", None, None);
     // This may succeed or fail depending on state; we just verify it doesn't panic
     let _ = result;
 }

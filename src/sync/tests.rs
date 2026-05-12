@@ -288,7 +288,7 @@ fn sync_rules_creates_backup_when_file_exists() {
     );
 
     // The backup should contain the old content.
-    let backup_content = std::fs::read_to_string(&backups[0]).unwrap();
+    let backup_content = std::fs::read_to_string(&backups[0].path).unwrap();
     assert_eq!(backup_content, old_content);
 }
 

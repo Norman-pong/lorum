@@ -633,7 +633,20 @@ pub fn run_backup_list(config_path: Option<&str>) -> Result<(), LorumError> {
     backup_cmds::run_backup_list(config_path)
 }
 
+/// Run the `backup create` subcommand.
+pub fn run_backup_create(
+    tools: &[String],
+    all: bool,
+    config_path: Option<&str>,
+) -> Result<(), LorumError> {
+    backup_cmds::run_backup_create(tools, all, config_path)
+}
+
 /// Run the `backup restore` subcommand.
-pub fn run_backup_restore(tool: &str, config_path: Option<&str>) -> Result<(), LorumError> {
-    backup_cmds::run_backup_restore(tool, config_path)
+pub fn run_backup_restore(
+    tool: &str,
+    backup: Option<&str>,
+    config_path: Option<&str>,
+) -> Result<(), LorumError> {
+    backup_cmds::run_backup_restore(tool, backup, config_path)
 }

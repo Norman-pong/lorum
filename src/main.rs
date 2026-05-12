@@ -124,10 +124,23 @@ enum BackupAction {
     /// List available backups.
     List,
 
+    /// Create a backup for one or more tools.
+    Create {
+        /// Tool name(s) to backup.
+        #[arg(num_args = 0..)]
+        tools: Vec<String>,
+        /// Backup all tools.
+        #[arg(long)]
+        all: bool,
+    },
+
     /// Restore a tool's configuration from a backup.
     Restore {
         /// Name of the tool to restore.
         tool: String,
+        /// Specific backup file to restore from.
+        #[arg(long)]
+        backup: Option<String>,
     },
 }
 
@@ -359,8 +372,11 @@ impl Cli {
             }) => commands::run_config(resolve_env, local, global, self.config.as_deref()),
             Some(Commands::Backup { action }) => match action {
                 BackupAction::List => commands::run_backup_list(self.config.as_deref()),
-                BackupAction::Restore { tool } => {
-                    commands::run_backup_restore(&tool, self.config.as_deref())
+                BackupAction::Create { tools, all } => {
+                    commands::run_backup_create(&tools, all, self.config.as_deref())
+                }
+                BackupAction::Restore { tool, backup } => {
+                    commands::run_backup_restore(&tool, backup.as_deref(), self.config.as_deref())
                 }
             },
             Some(Commands::Mcp { action }) => match action {
