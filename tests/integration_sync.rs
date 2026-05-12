@@ -180,6 +180,7 @@ fn backup_and_restore_roundtrip() {
                 m
             },
         },
+        ..Default::default()
     };
     save_config(&config_path, &original).unwrap();
 
@@ -203,6 +204,7 @@ fn backup_and_restore_roundtrip() {
                 m
             },
         },
+        ..Default::default()
     };
     save_config(&config_path, &modified).unwrap();
 
@@ -275,6 +277,7 @@ fn global_plus_project_merge() {
                 m
             },
         },
+        ..Default::default()
     };
 
     let project = ProjectConfig {
@@ -301,6 +304,7 @@ fn global_plus_project_merge() {
             },
         },
         exclude: vec![],
+        ..Default::default()
     };
 
     let merged = merge_configs(&global, Some(&project));
@@ -335,11 +339,13 @@ fn exclude_removes_servers() {
                 m
             },
         },
+        ..Default::default()
     };
 
     let project = ProjectConfig {
         mcp: McpConfig::default(),
         exclude: vec!["remove-me".into()],
+        ..Default::default()
     };
 
     let merged = merge_configs(&global, Some(&project));
@@ -370,6 +376,7 @@ fn merge_no_project_returns_global() {
                 m
             },
         },
+        ..Default::default()
     };
 
     let merged = merge_configs(&global, None);
@@ -442,6 +449,7 @@ fn config_roundtrip_load_save() {
                 m
             },
         },
+        ..Default::default()
     };
 
     // Save, then load, then verify content matches.

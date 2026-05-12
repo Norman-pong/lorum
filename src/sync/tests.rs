@@ -291,3 +291,53 @@ fn sync_rules_creates_backup_when_file_exists() {
     let backup_content = std::fs::read_to_string(&backups[0]).unwrap();
     assert_eq!(backup_content, old_content);
 }
+
+// ---------------------------------------------------------------------------
+// Hooks sync tests
+// ---------------------------------------------------------------------------
+
+use crate::config::{HookHandler, HooksConfig};
+
+fn make_hooks_config(event: &str, matcher: &str, command: &str) -> HooksConfig {
+    let mut config = HooksConfig::default();
+    config.events.insert(
+        event.into(),
+        vec![HookHandler {
+            matcher: matcher.into(),
+            command: command.into(),
+            timeout: None,
+            handler_type: None,
+        }],
+    );
+    config
+}
+
+#[test]
+fn sync_hooks_tools_reports_unknown_adapter() {
+    let config = make_hooks_config("pre-tool-use", "Bash", "check.sh");
+    let results = sync_hooks_tools(&config, &["nonexistent-tool".into()]);
+    assert_eq!(results.len(), 1);
+    assert!(!results[0].success);
+    assert!(
+        results[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("adapter not found")
+    );
+}
+
+#[test]
+fn dry_run_hooks_tools_unknown_tool_returns_error() {
+    let config = HooksConfig::default();
+    let results = dry_run_hooks_tools(&config, &["nonexistent-tool".into()]);
+    assert_eq!(results.len(), 1);
+    assert!(!results[0].success);
+    assert!(
+        results[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("adapter not found")
+    );
+}

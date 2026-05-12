@@ -56,6 +56,7 @@ fn merges_global_and_project() {
                 m
             },
         },
+        ..Default::default()
     };
 
     let project = ProjectConfig {
@@ -74,6 +75,7 @@ fn merges_global_and_project() {
             },
         },
         exclude: vec![],
+        ..Default::default()
     };
 
     let merged = merge_configs(&global, Some(&project));
@@ -99,6 +101,7 @@ fn project_server_overrides_global() {
                 m
             },
         },
+        ..Default::default()
     };
 
     let project = ProjectConfig {
@@ -117,6 +120,7 @@ fn project_server_overrides_global() {
             },
         },
         exclude: vec![],
+        ..Default::default()
     };
 
     let merged = merge_configs(&global, Some(&project));
@@ -151,6 +155,7 @@ fn exclude_removes_global_server() {
                 m
             },
         },
+        ..Default::default()
     };
 
     let project = ProjectConfig {
@@ -158,6 +163,7 @@ fn exclude_removes_global_server() {
             servers: BTreeMap::new(),
         },
         exclude: vec!["remove-me".into()],
+        ..Default::default()
     };
 
     let merged = merge_configs(&global, Some(&project));
@@ -201,4 +207,84 @@ fn returns_none_when_no_project_config() {
     let dir = TempDir::new().unwrap();
     let result = find_project_config(dir.path());
     assert!(result.is_none());
+}
+
+#[test]
+fn parses_config_with_hooks() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("config.yaml");
+    write_yaml(
+        &path,
+        "hooks:\n  pre-tool-use:\n    - matcher: Bash\n      command: scripts/check.sh\n      timeout: 30\n",
+    );
+
+    let config = load_config(&path).unwrap();
+    assert_eq!(config.hooks.events.len(), 1);
+    let handlers = &config.hooks.events["pre-tool-use"];
+    assert_eq!(handlers.len(), 1);
+    assert_eq!(handlers[0].matcher, "Bash");
+    assert_eq!(handlers[0].command, "scripts/check.sh");
+    assert_eq!(handlers[0].timeout, Some(30));
+    assert_eq!(handlers[0].handler_type, None);
+}
+
+#[test]
+fn merges_hooks_global_and_project() {
+    let global = LorumConfig {
+        mcp: McpConfig::default(),
+        hooks: HooksConfig {
+            events: {
+                let mut m = BTreeMap::new();
+                m.insert(
+                    "pre-tool-use".into(),
+                    vec![HookHandler {
+                        matcher: "Bash".into(),
+                        command: "global.sh".into(),
+                        timeout: None,
+                        handler_type: None,
+                    }],
+                );
+                m.insert(
+                    "session-start".into(),
+                    vec![HookHandler {
+                        matcher: "*".into(),
+                        command: "start.sh".into(),
+                        timeout: None,
+                        handler_type: None,
+                    }],
+                );
+                m
+            },
+        },
+    };
+
+    let project = ProjectConfig {
+        mcp: McpConfig::default(),
+        hooks: HooksConfig {
+            events: {
+                let mut m = BTreeMap::new();
+                m.insert(
+                    "pre-tool-use".into(),
+                    vec![HookHandler {
+                        matcher: "Write".into(),
+                        command: "project.sh".into(),
+                        timeout: Some(60),
+                        handler_type: None,
+                    }],
+                );
+                m
+            },
+        },
+        exclude: vec![],
+    };
+
+    let merged = merge_configs(&global, Some(&project));
+    assert_eq!(merged.hooks.events.len(), 2);
+    // Overridden event should use project handler.
+    let pre = &merged.hooks.events["pre-tool-use"];
+    assert_eq!(pre.len(), 1);
+    assert_eq!(pre[0].matcher, "Write");
+    assert_eq!(pre[0].command, "project.sh");
+    // Non-overridden global event should remain.
+    assert!(merged.hooks.events.contains_key("session-start"));
 }

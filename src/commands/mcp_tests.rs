@@ -79,6 +79,7 @@ fn add_overwrites_existing_server() {
                 m
             },
         },
+        ..Default::default()
     };
     let (_dir, config_path) = setup_temp_config(Some(&initial));
     let args: Vec<String> = vec!["new-arg".into()];
@@ -105,6 +106,7 @@ fn remove_existing_server() {
                 m
             },
         },
+        ..Default::default()
     };
     let (_dir, config_path) = setup_temp_config(Some(&initial));
 
@@ -122,6 +124,7 @@ fn remove_nonexistent_returns_error() {
         mcp: McpConfig {
             servers: BTreeMap::new(),
         },
+        ..Default::default()
     };
     let (_dir, config_path) = setup_temp_config(Some(&initial));
 
@@ -140,6 +143,7 @@ fn list_outputs_all_servers() {
                 m
             },
         },
+        ..Default::default()
     };
     let (_dir, config_path) = setup_temp_config(Some(&initial));
 
@@ -167,6 +171,7 @@ fn edit_updates_command() {
                 m
             },
         },
+        ..Default::default()
     };
     let (_dir, config_path) = setup_temp_config(Some(&initial));
 
@@ -197,6 +202,7 @@ fn edit_updates_args() {
                 m
             },
         },
+        ..Default::default()
     };
     let (_dir, config_path) = setup_temp_config(Some(&initial));
     let new_args: Vec<String> = vec!["a".into(), "b".into()];
@@ -224,6 +230,7 @@ fn edit_updates_env() {
                 m
             },
         },
+        ..Default::default()
     };
     let (_dir, config_path) = setup_temp_config(Some(&initial));
     let new_env: Vec<String> = vec!["NEW=new".into()];
@@ -249,6 +256,7 @@ fn edit_nonexistent_returns_error() {
         mcp: McpConfig {
             servers: BTreeMap::new(),
         },
+        ..Default::default()
     };
     let (_dir, config_path) = setup_temp_config(Some(&initial));
 

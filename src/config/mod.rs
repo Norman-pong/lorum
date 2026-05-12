@@ -31,20 +31,52 @@ pub struct McpConfig {
     pub servers: BTreeMap<String, McpServer>,
 }
 
+/// A single hook handler entry.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct HookHandler {
+    /// Matcher pattern (e.g., tool name or regex).
+    pub matcher: String,
+    /// Command to execute (or URL / prompt text / agent instruction).
+    pub command: String,
+    /// Optional timeout in seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
+    /// Handler type: `command`, `http`, `prompt`, `agent`, `mcp_tool`.
+    /// Defaults to `command` when not specified.
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    pub handler_type: Option<String>,
+}
+
+/// Hooks configuration: event name → list of handlers.
+///
+/// Event names use kebab-case in the unified config (e.g., `pre-tool-use`).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct HooksConfig {
+    /// Map of event name to ordered list of handlers.
+    #[serde(default, flatten)]
+    pub events: BTreeMap<String, Vec<HookHandler>>,
+}
+
 /// Lorum unified global configuration file structure.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct LorumConfig {
     /// MCP server configurations.
     #[serde(default)]
     pub mcp: McpConfig,
+    /// Hooks configurations.
+    #[serde(default)]
+    pub hooks: HooksConfig,
 }
 
 /// Project-level configuration with additional fields.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct ProjectConfig {
     /// MCP server configurations (overrides global on name collision).
     #[serde(default)]
     pub mcp: McpConfig,
+    /// Hooks configurations (overrides global on event name collision).
+    #[serde(default)]
+    pub hooks: HooksConfig,
     /// Server names to exclude from the merged result.
     #[serde(default)]
     pub exclude: Vec<String>,
@@ -182,8 +214,15 @@ pub fn merge_configs(global: &LorumConfig, project: Option<&ProjectConfig>) -> L
         servers.remove(name);
     }
 
+    // Project-level hooks override global hooks by event name (full replacement).
+    let mut events = global.hooks.events.clone();
+    for (name, handlers) in &project.hooks.events {
+        events.insert(name.clone(), handlers.clone());
+    }
+
     LorumConfig {
         mcp: McpConfig { servers },
+        hooks: HooksConfig { events },
     }
 }
 

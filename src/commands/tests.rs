@@ -123,6 +123,7 @@ fn check_valid_config() {
                 m
             },
         },
+        ..Default::default()
     };
     let (_dir, config_path) = setup_temp_config(Some(&initial));
 
@@ -139,6 +140,7 @@ fn check_empty_command_returns_error() {
                 m
             },
         },
+        ..Default::default()
     };
     let (_dir, config_path) = setup_temp_config(Some(&initial));
 
@@ -174,6 +176,7 @@ fn config_outputs_yaml() {
                 m
             },
         },
+        ..Default::default()
     };
     let (_dir, config_path) = setup_temp_config(Some(&initial));
 

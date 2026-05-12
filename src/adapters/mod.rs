@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::config::McpConfig;
+use crate::config::{HooksConfig, McpConfig};
 use crate::error::LorumError;
 
 pub mod claude;
@@ -122,6 +122,83 @@ pub(crate) fn write_rules_file(path: &Path, content: &str) -> Result<(), LorumEr
         source: e,
     })?;
     Ok(())
+}
+
+/// Per-tool adapter for reading/writing hooks configurations.
+///
+/// Implementors define how to interact with a specific AI coding tool's
+/// hooks configuration, including its format (JSON/TOML), location, and
+/// the field structure used for hooks.
+pub trait HooksAdapter {
+    /// Human-readable name of the tool (e.g. "claude-code").
+    fn name(&self) -> &str;
+
+    /// Paths where this tool stores configuration.
+    fn config_paths(&self) -> Vec<PathBuf>;
+
+    /// Read hooks from the tool's configuration.
+    ///
+    /// Returns an empty [`HooksConfig`] when the configuration file does not
+    /// exist or contains no hooks, rather than an error.
+    fn read_hooks(&self) -> Result<HooksConfig, LorumError>;
+
+    /// Write hooks to the tool's configuration.
+    ///
+    /// Must preserve non-hooks fields in the existing config file.
+    fn write_hooks(&self, config: &HooksConfig) -> Result<(), LorumError>;
+}
+
+/// Return all registered hooks adapters.
+pub fn all_hooks_adapters() -> Vec<Box<dyn HooksAdapter>> {
+    vec![Box::new(claude::ClaudeAdapter), Box::new(kimi::KimiAdapter)]
+}
+
+/// Find a hooks adapter by name.
+pub fn find_hooks_adapter(name: &str) -> Option<Box<dyn HooksAdapter>> {
+    all_hooks_adapters().into_iter().find(|a| a.name() == name)
+}
+
+/// Convert a kebab-case string to PascalCase.
+///
+/// # Examples
+///
+/// ```
+/// use lorum::adapters::kebab_to_pascal;
+/// assert_eq!(kebab_to_pascal("pre-tool-use"), "PreToolUse");
+/// assert_eq!(kebab_to_pascal("session-start"), "SessionStart");
+/// ```
+pub fn kebab_to_pascal(s: &str) -> String {
+    s.split('-')
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => {
+                    first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+                }
+            }
+        })
+        .collect()
+}
+
+/// Convert a PascalCase string to kebab-case.
+///
+/// # Examples
+///
+/// ```
+/// use lorum::adapters::pascal_to_kebab;
+/// assert_eq!(pascal_to_kebab("PreToolUse"), "pre-tool-use");
+/// assert_eq!(pascal_to_kebab("SessionStart"), "session-start");
+/// ```
+pub fn pascal_to_kebab(s: &str) -> String {
+    let mut result = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() && i > 0 {
+            result.push('-');
+        }
+        result.extend(c.to_lowercase());
+    }
+    result
 }
 
 /// Shared test utilities for adapter tests.

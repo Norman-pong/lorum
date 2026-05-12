@@ -9,6 +9,9 @@ use crate::config;
 use crate::error::LorumError;
 
 pub mod backup_cmds;
+pub mod hook;
+#[cfg(test)]
+mod hook_tests;
 pub mod mcp;
 #[cfg(test)]
 mod mcp_tests;
@@ -255,7 +258,10 @@ pub fn run_config(
         match config::find_project_config(&cwd) {
             Some(p) => {
                 let proj = config::load_project_config(&p)?;
-                config::LorumConfig { mcp: proj.mcp }
+                config::LorumConfig {
+                    mcp: proj.mcp,
+                    hooks: proj.hooks,
+                }
             }
             None => {
                 return Err(LorumError::ConfigNotFound {
@@ -269,7 +275,10 @@ pub fn run_config(
 
     let output = if resolve_env {
         let mcp = crate::env_interpolate::interpolate_mcp_config(&config.mcp, true);
-        config::LorumConfig { mcp }
+        config::LorumConfig {
+            mcp,
+            hooks: config.hooks,
+        }
     } else {
         config
     };

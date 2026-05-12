@@ -22,9 +22,10 @@
 use std::path::Path;
 
 use crate::adapters::{
-    ToolAdapter, all_adapters, all_rules_adapters, find_adapter, find_rules_adapter,
+    HooksAdapter, ToolAdapter, all_adapters, all_hooks_adapters, all_rules_adapters, find_adapter,
+    find_hooks_adapter, find_rules_adapter,
 };
-use crate::config::McpConfig;
+use crate::config::{HooksConfig, McpConfig};
 use crate::error::LorumError;
 
 /// Result of syncing a single tool.
@@ -410,6 +411,176 @@ pub fn dry_run_rules_tools(
             None => {
                 let err = LorumError::AdapterNotFound { name: name.clone() };
                 results.push(RulesDryRunResult {
+                    tool: name.clone(),
+                    success: false,
+                    needs_update: false,
+                    error: Some(err.to_string()),
+                });
+            }
+        }
+    }
+    results
+}
+
+// ---------------------------------------------------------------------------
+// Hooks sync
+// ---------------------------------------------------------------------------
+
+/// Result of syncing hooks to a single tool.
+#[derive(Debug)]
+pub struct HooksSyncResult {
+    /// Name of the tool that was synced.
+    pub tool: String,
+    /// Whether the sync succeeded.
+    pub success: bool,
+    /// Error message if the sync failed.
+    pub error: Option<String>,
+}
+
+/// Result of a dry-run preview for hooks syncing.
+#[derive(Debug)]
+pub struct HooksDryRunResult {
+    /// Name of the tool.
+    pub tool: String,
+    /// Whether the current hooks could be read successfully.
+    pub success: bool,
+    /// Whether the current hooks differ from the target hooks.
+    pub needs_update: bool,
+    /// Error message if the current hooks could not be read.
+    pub error: Option<String>,
+}
+
+/// Sync hooks configuration to all registered hooks adapters.
+///
+/// Each adapter is synced independently; a failure for one tool does not
+/// affect the others. Before writing, the existing file (if any) is backed
+/// up via [`crate::backup::create_backup`].
+pub fn sync_hooks_all(hooks_config: &HooksConfig) -> Vec<HooksSyncResult> {
+    let mut results = Vec::new();
+    for adapter in all_hooks_adapters() {
+        let result = sync_hooks_adapter(&*adapter, hooks_config);
+        results.push(result);
+    }
+    results
+}
+
+/// Sync hooks configuration to specified tools only.
+///
+/// Tools that are not found in the registered hooks adapters produce a failed
+/// [`HooksSyncResult`] with an appropriate error message.
+pub fn sync_hooks_tools(hooks_config: &HooksConfig, tool_names: &[String]) -> Vec<HooksSyncResult> {
+    let mut results = Vec::new();
+    for name in tool_names {
+        match find_hooks_adapter(name) {
+            Some(adapter) => {
+                let result = sync_hooks_adapter(&*adapter, hooks_config);
+                results.push(result);
+            }
+            None => {
+                let err = LorumError::AdapterNotFound { name: name.clone() };
+                results.push(HooksSyncResult {
+                    tool: name.clone(),
+                    success: false,
+                    error: Some(err.to_string()),
+                });
+            }
+        }
+    }
+    results
+}
+
+/// Sync a single hooks adapter.
+///
+/// Backs up the existing file (if present) before writing.
+fn sync_hooks_adapter(adapter: &dyn HooksAdapter, hooks_config: &HooksConfig) -> HooksSyncResult {
+    let name = adapter.name().to_string();
+
+    // Backup existing file before overwriting.
+    for path in adapter.config_paths() {
+        if path.exists() {
+            if let Err(e) = crate::backup::create_backup(&name, &path) {
+                eprintln!("warning: failed to backup {}: {}", path.display(), e);
+            }
+        }
+    }
+
+    match adapter.write_hooks(hooks_config) {
+        Ok(()) => HooksSyncResult {
+            tool: name,
+            success: true,
+            error: None,
+        },
+        Err(e) => HooksSyncResult {
+            tool: name,
+            success: false,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+/// Preview hooks sync results without writing anything.
+///
+/// For each registered hooks adapter, reads the current hooks and
+/// compares it against the target. No files are modified.
+pub fn dry_run_hooks_all(hooks_config: &HooksConfig) -> Vec<HooksDryRunResult> {
+    let mut results = Vec::new();
+    for adapter in all_hooks_adapters() {
+        let name = adapter.name().to_string();
+        match adapter.read_hooks() {
+            Ok(current) => {
+                let needs_update = current != *hooks_config;
+                results.push(HooksDryRunResult {
+                    tool: name,
+                    success: true,
+                    needs_update,
+                    error: None,
+                });
+            }
+            Err(e) => results.push(HooksDryRunResult {
+                tool: name,
+                success: false,
+                needs_update: false,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+    results
+}
+
+/// Preview hooks sync results for specified tools only.
+///
+/// Tools that are not found in the registered hooks adapters produce a failed
+/// [`HooksDryRunResult`] with an appropriate error message.
+pub fn dry_run_hooks_tools(
+    hooks_config: &HooksConfig,
+    tool_names: &[String],
+) -> Vec<HooksDryRunResult> {
+    let mut results = Vec::new();
+    for name in tool_names {
+        match find_hooks_adapter(name) {
+            Some(adapter) => {
+                let adapter_name = adapter.name().to_string();
+                match adapter.read_hooks() {
+                    Ok(current) => {
+                        let needs_update = current != *hooks_config;
+                        results.push(HooksDryRunResult {
+                            tool: adapter_name,
+                            success: true,
+                            needs_update,
+                            error: None,
+                        });
+                    }
+                    Err(e) => results.push(HooksDryRunResult {
+                        tool: adapter_name,
+                        success: false,
+                        needs_update: false,
+                        error: Some(e.to_string()),
+                    }),
+                }
+            }
+            None => {
+                let err = LorumError::AdapterNotFound { name: name.clone() };
+                results.push(HooksDryRunResult {
                     tool: name.clone(),
                     success: false,
                     needs_update: false,

@@ -1,8 +1,8 @@
-//! Kimi adapter for reading/writing MCP configuration.
+//! Kimi adapter for reading/writing MCP and hooks configuration.
 //!
 //! Configuration file: `~/.kimi/config.toml` (global)
 //!
-//! Format (TOML):
+//! MCP format (TOML):
 //! ```toml
 //! [mcp.client.server-name]
 //! command = "npx"
@@ -11,12 +11,21 @@
 //! [mcp.client.server-name.env]
 //! KEY = "value"
 //! ```
+//!
+//! Hooks format (TOML):
+//! ```toml
+//! [[hooks]]
+//! event = "PreToolUse"
+//! matcher = "Shell"
+//! command = ".kimi/hooks/safety-check.sh"
+//! timeout = 10
+//! ```
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::adapters::ToolAdapter;
-use crate::adapters::toml_utils;
-use crate::config::McpConfig;
+use crate::adapters::{HooksAdapter, ToolAdapter, kebab_to_pascal, pascal_to_kebab, toml_utils};
+use crate::config::{HookHandler, HooksConfig, McpConfig};
 use crate::error::LorumError;
 
 /// Adapter for Kimi.
@@ -34,6 +43,48 @@ const MCP_CLIENT: &str = "client";
 /// Returns the global Kimi config path: `~/.kimi/config.toml`.
 fn global_config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".kimi").join("config.toml"))
+}
+
+impl HooksAdapter for KimiAdapter {
+    fn name(&self) -> &str {
+        "kimi"
+    }
+
+    fn config_paths(&self) -> Vec<PathBuf> {
+        global_config_path().into_iter().collect()
+    }
+
+    fn read_hooks(&self) -> Result<HooksConfig, LorumError> {
+        let path = match global_config_path() {
+            Some(p) => p,
+            None => return Ok(HooksConfig::default()),
+        };
+        if !path.exists() {
+            return Ok(HooksConfig::default());
+        }
+        let root = toml_utils::read_existing_toml(&path)?;
+        Ok(parse_hooks_from_toml(&root))
+    }
+
+    fn write_hooks(&self, config: &HooksConfig) -> Result<(), LorumError> {
+        let path = match global_config_path() {
+            Some(p) => p,
+            None => {
+                return Err(LorumError::Other {
+                    message: "cannot determine home directory".into(),
+                });
+            }
+        };
+        let mut root = toml_utils::read_existing_toml(&path)?;
+        let hooks_array = hooks_config_to_toml_array(config);
+
+        let root_table = root.as_table_mut().ok_or_else(|| LorumError::Other {
+            message: format!("expected table at root of {}", path.display()),
+        })?;
+        root_table.insert("hooks".into(), toml::Value::Array(hooks_array));
+
+        toml_utils::write_toml(&path, &root)
+    }
 }
 
 impl ToolAdapter for KimiAdapter {
@@ -103,6 +154,75 @@ fn parse_mcp_client(root: &toml::Value) -> McpConfig {
         }
     }
     McpConfig { servers: map }
+}
+
+/// Parse hooks from a TOML value.
+fn parse_hooks_from_toml(root: &toml::Value) -> HooksConfig {
+    let Some(hooks_array) = root.get("hooks").and_then(|v| v.as_array()) else {
+        return HooksConfig::default();
+    };
+    let mut events: BTreeMap<String, Vec<HookHandler>> = BTreeMap::new();
+    for entry in hooks_array {
+        let Some(table) = entry.as_table() else {
+            continue;
+        };
+        let Some(pascal_event) = table
+            .get("event")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+        let kebab_event = pascal_to_kebab(pascal_event);
+        let Some(matcher) = table
+            .get("matcher")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+        let Some(command) = table
+            .get("command")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+        let timeout = table
+            .get("timeout")
+            .and_then(|v| v.as_integer())
+            .and_then(|v| u64::try_from(v).ok());
+        let handler_type = table.get("type").and_then(|v| v.as_str()).map(String::from);
+        events.entry(kebab_event).or_default().push(HookHandler {
+            matcher: matcher.to_string(),
+            command: command.to_string(),
+            timeout,
+            handler_type,
+        });
+    }
+    HooksConfig { events }
+}
+
+/// Convert a HooksConfig to a TOML array of hook tables.
+fn hooks_config_to_toml_array(config: &HooksConfig) -> Vec<toml::Value> {
+    let mut array = Vec::new();
+    for (event_name, handlers) in &config.events {
+        let pascal_event = kebab_to_pascal(event_name);
+        for h in handlers {
+            let mut table = toml::map::Map::new();
+            table.insert("event".into(), toml::Value::String(pascal_event.clone()));
+            table.insert("matcher".into(), toml::Value::String(h.matcher.clone()));
+            table.insert("command".into(), toml::Value::String(h.command.clone()));
+            if let Some(t) = h.timeout {
+                table.insert("timeout".into(), toml::Value::Integer(t as i64));
+            }
+            if let Some(ref ty) = h.handler_type {
+                table.insert("type".into(), toml::Value::String(ty.clone()));
+            }
+            array.push(toml::Value::Table(table));
+        }
+    }
+    array
 }
 
 #[cfg(test)]
@@ -237,6 +357,101 @@ KEY = "value"
     #[test]
     fn adapter_name() {
         let adapter = KimiAdapter;
-        assert_eq!(adapter.name(), "kimi");
+        assert_eq!(ToolAdapter::name(&adapter), "kimi");
+    }
+
+    // --- hooks -------------------------------------------------------------
+
+    #[test]
+    fn parse_hooks_from_valid_toml() {
+        let toml_str = r#"
+[[hooks]]
+event = "PreToolUse"
+matcher = "Bash"
+command = "scripts/check.sh"
+timeout = 60
+
+[[hooks]]
+event = "PreToolUse"
+matcher = "Write"
+command = "scripts/write-check.sh"
+
+[[hooks]]
+event = "PostToolUse"
+matcher = "Edit"
+command = "cargo fmt"
+"#;
+        let root: toml::Value = toml::from_str(toml_str).unwrap();
+        let config = parse_hooks_from_toml(&root);
+        assert_eq!(config.events.len(), 2);
+        let pre = &config.events["pre-tool-use"];
+        assert_eq!(pre.len(), 2);
+        assert_eq!(pre[0].matcher, "Bash");
+        assert_eq!(pre[0].timeout, Some(60));
+        assert_eq!(pre[1].matcher, "Write");
+        assert_eq!(pre[1].timeout, None);
+        let post = &config.events["post-tool-use"];
+        assert_eq!(post.len(), 1);
+        assert_eq!(post[0].matcher, "Edit");
+    }
+
+    #[test]
+    fn parse_hooks_empty_when_no_field() {
+        let root: toml::Value = toml::from_str("other = true").unwrap();
+        let config = parse_hooks_from_toml(&root);
+        assert!(config.events.is_empty());
+    }
+
+    #[test]
+    fn write_hooks_preserves_other_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "other_field = true\n").unwrap();
+
+        let mut config = HooksConfig::default();
+        config.events.insert(
+            "pre-tool-use".into(),
+            vec![HookHandler {
+                matcher: "Shell".into(),
+                command: "check.sh".into(),
+                timeout: Some(10),
+                handler_type: None,
+            }],
+        );
+
+        // Test via helper functions (adapter uses global path).
+        let mut root = toml_utils::read_existing_toml(&path).unwrap();
+        let hooks_array = hooks_config_to_toml_array(&config);
+        root.as_table_mut()
+            .unwrap()
+            .insert("hooks".into(), toml::Value::Array(hooks_array));
+        toml_utils::write_toml(&path, &root).unwrap();
+
+        let result: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(result["other_field"].as_bool(), Some(true));
+        let hooks = result["hooks"].as_array().unwrap();
+        assert_eq!(hooks.len(), 1);
+        assert_eq!(hooks[0]["event"].as_str(), Some("PreToolUse"));
+        assert_eq!(hooks[0]["matcher"].as_str(), Some("Shell"));
+        assert_eq!(hooks[0]["timeout"].as_integer(), Some(10));
+    }
+
+    #[test]
+    fn hooks_roundtrip_toml() {
+        let mut config = HooksConfig::default();
+        config.events.insert(
+            "pre-tool-use".into(),
+            vec![HookHandler {
+                matcher: "Bash".into(),
+                command: "check.sh".into(),
+                timeout: Some(60),
+                handler_type: Some("command".into()),
+            }],
+        );
+        let array = hooks_config_to_toml_array(&config);
+        let mut root = toml::map::Map::new();
+        root.insert("hooks".into(), toml::Value::Array(array));
+        let parsed = parse_hooks_from_toml(&toml::Value::Table(root));
+        assert_eq!(config, parsed);
     }
 }

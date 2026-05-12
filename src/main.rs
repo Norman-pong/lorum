@@ -92,6 +92,12 @@ enum Commands {
         #[command(subcommand)]
         action: RuleAction,
     },
+
+    /// Manage lifecycle hooks.
+    Hook {
+        #[command(subcommand)]
+        action: HookAction,
+    },
 }
 
 /// Subcommands for the `backup` command.
@@ -207,6 +213,50 @@ enum RuleAction {
     },
 }
 
+/// Subcommands for the `hook` command.
+#[derive(clap::Subcommand)]
+enum HookAction {
+    /// Add a hook handler for an event.
+    Add {
+        /// Event name (e.g., pre-tool-use, post-tool-use).
+        event: String,
+        /// Matcher pattern (e.g., tool name or regex).
+        #[arg(long)]
+        matcher: String,
+        /// Command to execute.
+        #[arg(long)]
+        command: String,
+        /// Optional timeout in seconds.
+        #[arg(long)]
+        timeout: Option<u64>,
+        /// Handler type: command, http, prompt, agent, mcp_tool.
+        #[arg(long)]
+        handler_type: Option<String>,
+    },
+
+    /// Remove a hook handler or an entire event.
+    Remove {
+        /// Event name to remove from.
+        event: String,
+        /// Specific matcher to remove (omit to remove entire event).
+        #[arg(long)]
+        matcher: Option<String>,
+    },
+
+    /// List all configured hooks.
+    List,
+
+    /// Synchronise hooks to target tools.
+    Sync {
+        /// Show what would change without writing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Only sync the specified tools (defaults to all).
+        #[arg(long = "tools", num_args = 1..)]
+        tools: Vec<String>,
+    },
+}
+
 impl Cli {
     /// Parse CLI arguments and dispatch to the appropriate subcommand.
     fn run(self) -> Result<(), lorum::error::LorumError> {
@@ -270,6 +320,31 @@ impl Cli {
                     commands::rule::run_rule_sync(dry_run, &tools)
                 }
                 RuleAction::Import { from } => commands::rule::run_rule_import(&from),
+            },
+            Commands::Hook { action } => match action {
+                HookAction::Add {
+                    event,
+                    matcher,
+                    command,
+                    timeout,
+                    handler_type,
+                } => commands::hook::run_hook_add(
+                    &event,
+                    &matcher,
+                    &command,
+                    timeout,
+                    handler_type.as_deref(),
+                    self.config.as_deref(),
+                ),
+                HookAction::Remove { event, matcher } => commands::hook::run_hook_remove(
+                    &event,
+                    matcher.as_deref(),
+                    self.config.as_deref(),
+                ),
+                HookAction::List => commands::hook::run_hook_list(self.config.as_deref()),
+                HookAction::Sync { dry_run, tools } => {
+                    commands::hook::run_hook_sync(dry_run, &tools, self.config.as_deref())
+                }
             },
         }
     }
