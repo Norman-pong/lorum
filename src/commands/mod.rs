@@ -196,20 +196,102 @@ fn print_sync_results(results: &[crate::sync::SyncResult]) -> usize {
 }
 
 /// Run the `check` subcommand: validates the effective configuration.
+///
+/// Checks MCP servers (command availability, env references), hooks (event
+/// names, handler fields), and the unified skills directory structure.
 pub fn run_check(config_path: Option<&str>) -> Result<(), LorumError> {
     let config =
         config::resolve_effective_config_from_cwd(config_path.map(PathBuf::from).as_deref())?;
 
     let mut issues = Vec::new();
 
+    // ── MCP server checks ───────────────────────────────────────────
     for (name, server) in &config.mcp.servers {
         if server.command.is_empty() {
             issues.push(format!("server '{name}' has empty command"));
+            continue;
+        }
+        if !command_exists(&server.command) {
+            issues.push(format!(
+                "server '{name}' command '{}' not found on PATH",
+                server.command
+            ));
+        }
+        // Check for unset env references in command, args, and env values.
+        let mut refs = find_unset_env_refs(&server.command);
+        for arg in &server.args {
+            refs.extend(find_unset_env_refs(arg));
+        }
+        for val in server.env.values() {
+            refs.extend(find_unset_env_refs(val));
+        }
+        for var in refs {
+            issues.push(format!(
+                "server '{name}' references unset environment variable '${{{var}}}'"
+            ));
         }
     }
 
+    // ── Hooks checks ────────────────────────────────────────────────
+    for (event, handlers) in &config.hooks.events {
+        if event.is_empty() {
+            issues.push("hooks: empty event name".into());
+            continue;
+        }
+        if !is_valid_kebab_case(event) {
+            issues.push(format!(
+                "hooks: event '{event}' is not valid kebab-case"
+            ));
+        }
+        for (i, h) in handlers.iter().enumerate() {
+            if h.matcher.is_empty() {
+                issues.push(format!(
+                    "hooks: event '{event}' handler {i} has empty matcher"
+                ));
+            }
+            if h.command.is_empty() {
+                issues.push(format!(
+                    "hooks: event '{event}' handler {i} has empty command"
+                ));
+            }
+        }
+    }
+
+    // ── Skills directory checks ─────────────────────────────────────
+    match crate::skills::global_skills_dir() {
+        Ok(dir) if dir.exists() => {
+            match crate::skills::scan_skills_dir(&dir) {
+                Ok(entries) => {
+                    for entry in &entries {
+                        if entry.manifest.name.is_empty() {
+                            issues.push(format!(
+                                "skill '{}' has empty manifest name",
+                                entry.dir_path.display()
+                            ));
+                        }
+                    }
+                }
+                Err(e) => {
+                    issues.push(format!(
+                        "failed to scan skills directory '{}': {e}",
+                        dir.display()
+                    ));
+                }
+            }
+        }
+        _ => {} // No global skills directory yet — that's fine.
+    }
+
+    // ── Summary ─────────────────────────────────────────────────────
     if issues.is_empty() {
-        println!("config is valid ({} servers)", config.mcp.servers.len());
+        let hook_events = config.hooks.events.len();
+        let hook_handlers: usize = config.hooks.events.values().map(|v| v.len()).sum();
+        println!(
+            "config is valid ({} servers, {} hook events, {} handlers)",
+            config.mcp.servers.len(),
+            hook_events,
+            hook_handlers,
+        );
     } else {
         for issue in &issues {
             eprintln!("issue: {issue}");
@@ -221,27 +303,150 @@ pub fn run_check(config_path: Option<&str>) -> Result<(), LorumError> {
     Ok(())
 }
 
-/// Run the `status` subcommand: shows installation status per tool.
-pub fn run_status(_config_path: Option<&str>) -> Result<(), LorumError> {
-    for adapter in crate::adapters::all_adapters() {
-        let paths = adapter.config_paths();
-        let any_exists = paths.iter().any(|p| p.exists());
+/// Check whether a command exists on PATH or as an absolute/relative path.
+fn command_exists(cmd: &str) -> bool {
+    if cmd.contains('/') || cmd.contains('\\') {
+        return std::path::Path::new(cmd).is_file();
+    }
+    if let Ok(path_env) = std::env::var("PATH") {
+        for dir in path_env.split(if cfg!(windows) { ';' } else { ':' }) {
+            let full = std::path::Path::new(dir).join(cmd);
+            if full.is_file() {
+                return true;
+            }
+            #[cfg(windows)]
+            if std::path::Path::new(dir).join(format!("{cmd}.exe")).is_file() {
+                return true;
+            }
+        }
+    }
+    false
+}
 
-        let mcp_count = if any_exists {
-            adapter.read_mcp().map(|m| m.servers.len()).unwrap_or(0)
+/// Find all `${VAR}` references in a string and return those that are unset.
+fn find_unset_env_refs(value: &str) -> Vec<String> {
+    let mut unset = Vec::new();
+    let chars: Vec<char> = value.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '$' && i + 1 < chars.len() && chars[i + 1] == '{' {
+            i += 2;
+            let mut var_name = String::new();
+            let mut found_close = false;
+            while i < chars.len() {
+                if chars[i] == '}' {
+                    found_close = true;
+                    i += 1;
+                    break;
+                }
+                var_name.push(chars[i]);
+                i += 1;
+            }
+            if found_close && std::env::var(&var_name).is_err() {
+                unset.push(var_name);
+            }
         } else {
-            0
-        };
+            i += 1;
+        }
+    }
+    unset
+}
 
-        let status = if any_exists { "installed" } else { "not found" };
+/// Validate that a string is valid kebab-case (lowercase letters, digits, hyphens).
+fn is_valid_kebab_case(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !s.starts_with('-')
+        && !s.ends_with('-')
+        && !s.contains("--")
+}
+
+/// Run the `status` subcommand: shows installation status per tool.
+///
+/// Displays a panoramic view across all four dimensions (MCP, Rules, Hooks,
+/// Skills) for every registered tool.
+pub fn run_status(_config_path: Option<&str>) -> Result<(), LorumError> {
+    let mut tool_names = std::collections::BTreeSet::new();
+
+    for a in crate::adapters::all_adapters() {
+        tool_names.insert(a.name().to_string());
+    }
+    for a in crate::adapters::all_rules_adapters() {
+        tool_names.insert(a.name().to_string());
+    }
+    for a in crate::adapters::all_hooks_adapters() {
+        tool_names.insert(a.name().to_string());
+    }
+    for a in crate::adapters::all_skills_adapters() {
+        tool_names.insert(a.name().to_string());
+    }
+
+    let cwd = std::env::current_dir().ok();
+
+    println!(
+        "{:<15} {:>6} {:>8} {:>8} {:>8}",
+        "TOOL", "MCP", "RULES", "HOOKS", "SKILLS"
+    );
+
+    for name in tool_names {
+        let mcp = mcp_status(&name);
+        let rules = rules_status(&name, cwd.as_deref());
+        let hooks = hooks_status(&name);
+        let skills = skills_status(&name);
+
         println!(
-            "{:<15} {:<12} {} servers",
-            adapter.name(),
-            status,
-            mcp_count
+            "{:<15} {:>6} {:>8} {:>8} {:>8}",
+            name,
+            fmt_count(mcp),
+            fmt_count(rules),
+            fmt_count(hooks),
+            fmt_count(skills),
         );
     }
     Ok(())
+}
+
+/// Format a dimension count for display: `None` → "-", `Some(0)` → "·", `Some(n)` → "n".
+fn fmt_count(count: Option<usize>) -> String {
+    match count {
+        None => "-".to_string(),
+        Some(0) => "·".to_string(),
+        Some(n) => n.to_string(),
+    }
+}
+
+/// Query MCP server count for a tool, returning `None` if the tool has no MCP adapter.
+fn mcp_status(name: &str) -> Option<usize> {
+    let adapter = crate::adapters::find_adapter(name)?;
+    let paths = adapter.config_paths();
+    if !paths.iter().any(|p| p.exists()) {
+        return Some(0);
+    }
+    adapter.read_mcp().map(|m| m.servers.len()).ok()
+}
+
+/// Query rules section count for a tool, returning `None` if unsupported.
+fn rules_status(name: &str, project_root: Option<&std::path::Path>) -> Option<usize> {
+    let adapter = crate::adapters::find_rules_adapter(name)?;
+    let root = project_root?;
+    let content = adapter.read_rules(root).ok()?;
+    Some(content.map(|c| crate::rules::parse_rules(&c).sections.len()).unwrap_or(0))
+}
+
+/// Query hooks count for a tool, returning `None` if unsupported.
+fn hooks_status(name: &str) -> Option<usize> {
+    let adapter = crate::adapters::find_hooks_adapter(name)?;
+    let paths = adapter.config_paths();
+    if !paths.iter().any(|p| p.exists()) {
+        return Some(0);
+    }
+    adapter.read_hooks().map(|h| h.events.values().map(|v| v.len()).sum()).ok()
+}
+
+/// Query skills count for a tool, returning `None` if unsupported.
+fn skills_status(name: &str) -> Option<usize> {
+    let adapter = crate::adapters::find_skills_adapter(name)?;
+    adapter.read_skills().map(|s| s.len()).ok()
 }
 
 /// Run the `config` subcommand: outputs resolved configuration as YAML.

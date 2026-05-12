@@ -119,7 +119,9 @@ fn check_valid_config() {
         mcp: McpConfig {
             servers: {
                 let mut m = BTreeMap::new();
-                m.insert("srv".into(), make_server("cmd", &[], &[]));
+                // Use "cargo" as a command that is guaranteed to be on PATH
+                // during test execution.
+                m.insert("srv".into(), make_server("cargo", &[], &[]));
                 m
             },
         },
