@@ -15,12 +15,13 @@
 //! }
 //! ```
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::adapters::ToolAdapter;
 use crate::adapters::json_utils;
+use crate::adapters::{SkillsAdapter, ToolAdapter};
 use crate::config::McpConfig;
 use crate::error::LorumError;
+use crate::skills::{SkillEntry, copy_dir_recursive, scan_skills_dir};
 
 /// Adapter for Proma.
 ///
@@ -34,6 +35,59 @@ const MCP_FIELD: &str = "servers";
 /// Returns the global Proma config path: `~/.proma/mcp.json`.
 fn global_config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".proma").join("mcp.json"))
+}
+
+/// Returns the Proma workspace skills base dir for the current workspace.
+fn workspace_skills_dir() -> Option<PathBuf> {
+    std::env::var("PROMA_WORKSPACE_ROOT")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| {
+            dirs::home_dir().map(|h| h.join(".proma").join("agent-workspaces").join("lorum"))
+        })
+        .map(|root| root.join("skills"))
+}
+
+/// Adapter for Proma skills.
+pub struct PromaSkillsAdapter;
+
+impl SkillsAdapter for PromaSkillsAdapter {
+    fn name(&self) -> &str {
+        "proma"
+    }
+
+    fn skills_base_dir(&self) -> Option<PathBuf> {
+        workspace_skills_dir()
+    }
+
+    fn read_skills(&self) -> Result<Vec<SkillEntry>, LorumError> {
+        let Some(dir) = self.skills_base_dir() else {
+            return Ok(Vec::new());
+        };
+        scan_skills_dir(&dir)
+    }
+
+    fn write_skill(&self, name: &str, source_dir: &Path) -> Result<(), LorumError> {
+        let dir = self.skills_base_dir().ok_or_else(|| LorumError::Other {
+            message: "cannot determine Proma workspace directory".into(),
+        })?;
+        let target = dir.join(name);
+        if target.exists() {
+            std::fs::remove_dir_all(&target)?;
+        }
+        copy_dir_recursive(source_dir, &target)
+    }
+
+    fn remove_skill(&self, name: &str) -> Result<(), LorumError> {
+        let dir = self.skills_base_dir().ok_or_else(|| LorumError::Other {
+            message: "cannot determine Proma workspace directory".into(),
+        })?;
+        let target = dir.join(name);
+        if target.exists() {
+            std::fs::remove_dir_all(target)?;
+        }
+        Ok(())
+    }
 }
 
 impl ToolAdapter for PromaAdapter {
@@ -180,8 +234,28 @@ mod tests {
     }
 
     #[test]
-    fn adapter_name() {
-        let adapter = PromaAdapter;
+    #[test]
+    fn skills_adapter_name() {
+        let adapter = PromaSkillsAdapter;
         assert_eq!(adapter.name(), "proma");
+    }
+
+    #[test]
+    fn write_skill_copies_directory_contents() {
+        let src = tempfile::tempdir().unwrap();
+        std::fs::write(
+            src.path().join("SKILL.md"),
+            "---\nname: test-skill\ndescription: \"Test\"\n---\n# Body\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(src.path().join("references")).unwrap();
+        std::fs::write(src.path().join("references/info.md"), "hello\n").unwrap();
+
+        let dst_root = tempfile::tempdir().unwrap();
+        let target = dst_root.path().join("test-skill");
+        copy_dir_recursive(src.path(), &target).unwrap();
+
+        assert!(target.join("SKILL.md").exists());
+        assert!(target.join("references/info.md").exists());
     }
 }

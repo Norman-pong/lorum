@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{HooksConfig, McpConfig};
 use crate::error::LorumError;
+use crate::skills::SkillEntry;
 
 pub mod claude;
 pub mod codex;
@@ -156,6 +157,41 @@ pub fn all_hooks_adapters() -> Vec<Box<dyn HooksAdapter>> {
 /// Find a hooks adapter by name.
 pub fn find_hooks_adapter(name: &str) -> Option<Box<dyn HooksAdapter>> {
     all_hooks_adapters().into_iter().find(|a| a.name() == name)
+}
+
+/// Per-tool adapter for reading/writing skills directories.
+///
+/// Skills are directory-based entities (each skill is a folder containing
+/// SKILL.md and optional auxiliary files). Adapters define where each tool
+/// stores its skills.
+pub trait SkillsAdapter {
+    /// Human-readable name of the tool (e.g. "claude-code").
+    fn name(&self) -> &str;
+
+    /// Base directory where this tool stores skills.
+    fn skills_base_dir(&self) -> Option<PathBuf>;
+
+    /// Read all skills from the tool's skills directory.
+    fn read_skills(&self) -> Result<Vec<SkillEntry>, LorumError>;
+
+    /// Write a single skill (full directory copy) to the tool's skills dir.
+    fn write_skill(&self, name: &str, source_dir: &Path) -> Result<(), LorumError>;
+
+    /// Remove a skill directory from the tool's skills dir.
+    fn remove_skill(&self, name: &str) -> Result<(), LorumError>;
+}
+
+/// Return all registered skills adapters.
+pub fn all_skills_adapters() -> Vec<Box<dyn SkillsAdapter>> {
+    vec![
+        Box::new(claude::ClaudeSkillsAdapter),
+        Box::new(proma::PromaSkillsAdapter),
+    ]
+}
+
+/// Find a skills adapter by name.
+pub fn find_skills_adapter(name: &str) -> Option<Box<dyn SkillsAdapter>> {
+    all_skills_adapters().into_iter().find(|a| a.name() == name)
 }
 
 /// Convert a kebab-case string to PascalCase.

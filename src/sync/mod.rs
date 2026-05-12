@@ -22,8 +22,8 @@
 use std::path::Path;
 
 use crate::adapters::{
-    HooksAdapter, ToolAdapter, all_adapters, all_hooks_adapters, all_rules_adapters, find_adapter,
-    find_hooks_adapter, find_rules_adapter,
+    HooksAdapter, SkillsAdapter, ToolAdapter, all_adapters, all_hooks_adapters, all_rules_adapters,
+    all_skills_adapters, find_adapter, find_hooks_adapter, find_rules_adapter, find_skills_adapter,
 };
 use crate::config::{HooksConfig, McpConfig};
 use crate::error::LorumError;
@@ -590,6 +590,247 @@ pub fn dry_run_hooks_tools(
         }
     }
     results
+}
+
+// ---------------------------------------------------------------------------
+// Skills sync
+// ---------------------------------------------------------------------------
+
+/// Result of syncing skills to a single tool.
+#[derive(Debug)]
+pub struct SkillsSyncResult {
+    /// Name of the tool that was synced.
+    pub tool: String,
+    /// Whether the sync succeeded.
+    pub success: bool,
+    /// Number of skills synced.
+    pub skills_synced: usize,
+    /// Error message if the sync failed.
+    pub error: Option<String>,
+}
+
+/// Result of a dry-run preview for skills syncing.
+#[derive(Debug)]
+pub struct SkillsDryRunResult {
+    /// Name of the tool.
+    pub tool: String,
+    /// Whether the current skills could be read successfully.
+    pub success: bool,
+    /// Number of skills that would be updated.
+    pub skills_to_update: usize,
+    /// Number of skills that are up to date.
+    pub skills_up_to_date: usize,
+    /// Error message if the current skills could not be read.
+    pub error: Option<String>,
+}
+
+/// Sync skills from the unified skills directory to all registered skills adapters.
+///
+/// Each adapter is synced independently; a failure for one tool does not
+/// affect the others. Before writing, existing skill directories are backed
+/// up by renaming with a timestamp suffix.
+pub fn sync_skills_all(skills_dir: &std::path::Path) -> Vec<SkillsSyncResult> {
+    let mut results = Vec::new();
+    for adapter in all_skills_adapters() {
+        let result = sync_skills_adapter(&*adapter, skills_dir);
+        results.push(result);
+    }
+    results
+}
+
+/// Sync skills to specified tools only.
+///
+/// Tools that are not found in the registered skills adapters produce a failed
+/// [`SkillsSyncResult`] with an appropriate error message.
+pub fn sync_skills_tools(
+    skills_dir: &std::path::Path,
+    tool_names: &[String],
+) -> Vec<SkillsSyncResult> {
+    let mut results = Vec::new();
+    for name in tool_names {
+        match find_skills_adapter(name) {
+            Some(adapter) => {
+                let result = sync_skills_adapter(&*adapter, skills_dir);
+                results.push(result);
+            }
+            None => {
+                let err = LorumError::AdapterNotFound { name: name.clone() };
+                results.push(SkillsSyncResult {
+                    tool: name.clone(),
+                    success: false,
+                    skills_synced: 0,
+                    error: Some(err.to_string()),
+                });
+            }
+        }
+    }
+    results
+}
+
+/// Sync a single skills adapter.
+///
+/// Backs up existing skill directories before overwriting.
+fn sync_skills_adapter(
+    adapter: &dyn SkillsAdapter,
+    skills_dir: &std::path::Path,
+) -> SkillsSyncResult {
+    let name = adapter.name().to_string();
+
+    let source_skills = match crate::skills::scan_skills_dir(skills_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            return SkillsSyncResult {
+                tool: name,
+                success: false,
+                skills_synced: 0,
+                error: Some(e.to_string()),
+            };
+        }
+    };
+
+    let mut synced = 0usize;
+    for skill in &source_skills {
+        let skill_name = &skill.manifest.name;
+
+        // Backup existing skill directory before overwriting.
+        if let Some(base) = adapter.skills_base_dir() {
+            let target = base.join(skill_name);
+            if target.exists() {
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let backup = base.join(format!("{skill_name}.backup-{ts}"));
+                if let Err(e) = std::fs::rename(&target, &backup) {
+                    eprintln!("warning: failed to backup skill {}: {}", skill_name, e);
+                }
+            }
+        }
+
+        match adapter.write_skill(skill_name, &skill.dir_path) {
+            Ok(()) => synced += 1,
+            Err(e) => {
+                eprintln!(
+                    "warning: failed to sync skill {} to {}: {}",
+                    skill_name, name, e
+                );
+            }
+        }
+    }
+
+    SkillsSyncResult {
+        tool: name,
+        success: true,
+        skills_synced: synced,
+        error: None,
+    }
+}
+
+/// Preview skills sync results without writing anything.
+///
+/// For each registered skills adapter, reads the current skills and
+/// compares them against the unified skills directory. No files are modified.
+pub fn dry_run_skills_all(skills_dir: &std::path::Path) -> Vec<SkillsDryRunResult> {
+    let mut results = Vec::new();
+    for adapter in all_skills_adapters() {
+        let result = dry_run_skills_adapter(&*adapter, skills_dir);
+        results.push(result);
+    }
+    results
+}
+
+/// Preview skills sync results for specified tools only.
+///
+/// Tools that are not found in the registered skills adapters produce a failed
+/// [`SkillsDryRunResult`] with an appropriate error message.
+pub fn dry_run_skills_tools(
+    skills_dir: &std::path::Path,
+    tool_names: &[String],
+) -> Vec<SkillsDryRunResult> {
+    let mut results = Vec::new();
+    for name in tool_names {
+        match find_skills_adapter(name) {
+            Some(adapter) => {
+                let result = dry_run_skills_adapter(&*adapter, skills_dir);
+                results.push(result);
+            }
+            None => {
+                let err = LorumError::AdapterNotFound { name: name.clone() };
+                results.push(SkillsDryRunResult {
+                    tool: name.clone(),
+                    success: false,
+                    skills_to_update: 0,
+                    skills_up_to_date: 0,
+                    error: Some(err.to_string()),
+                });
+            }
+        }
+    }
+    results
+}
+
+/// Dry-run a single skills adapter.
+fn dry_run_skills_adapter(
+    adapter: &dyn SkillsAdapter,
+    skills_dir: &std::path::Path,
+) -> SkillsDryRunResult {
+    let name = adapter.name().to_string();
+
+    let source_skills = match crate::skills::scan_skills_dir(skills_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            return SkillsDryRunResult {
+                tool: name,
+                success: false,
+                skills_to_update: 0,
+                skills_up_to_date: 0,
+                error: Some(e.to_string()),
+            };
+        }
+    };
+
+    let target_skills = match adapter.read_skills() {
+        Ok(s) => s,
+        Err(e) => {
+            return SkillsDryRunResult {
+                tool: name,
+                success: false,
+                skills_to_update: 0,
+                skills_up_to_date: 0,
+                error: Some(e.to_string()),
+            };
+        }
+    };
+
+    let mut to_update = 0usize;
+    let mut up_to_date = 0usize;
+
+    for source in &source_skills {
+        let source_name = &source.manifest.name;
+        let target = target_skills
+            .iter()
+            .find(|t| t.manifest.name == *source_name);
+        match target {
+            Some(t) => {
+                if t.content != source.content {
+                    to_update += 1;
+                } else {
+                    up_to_date += 1;
+                }
+            }
+            None => {
+                to_update += 1;
+            }
+        }
+    }
+
+    SkillsDryRunResult {
+        tool: name,
+        success: true,
+        skills_to_update: to_update,
+        skills_up_to_date: up_to_date,
+        error: None,
+    }
 }
 
 #[cfg(test)]

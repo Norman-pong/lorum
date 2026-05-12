@@ -18,6 +18,9 @@ mod mcp_tests;
 pub mod rule;
 #[cfg(test)]
 mod rule_tests;
+pub mod skill;
+#[cfg(test)]
+mod skill_tests;
 #[cfg(test)]
 mod tests;
 

@@ -98,6 +98,12 @@ enum Commands {
         #[command(subcommand)]
         action: HookAction,
     },
+
+    /// Manage AI skills.
+    Skill {
+        #[command(subcommand)]
+        action: SkillAction,
+    },
 }
 
 /// Subcommands for the `backup` command.
@@ -210,6 +216,44 @@ enum RuleAction {
         /// Tool name to import from (cursor, windsurf, codex).
         #[arg(long = "from")]
         from: String,
+    },
+}
+
+/// Subcommands for the `skill` command.
+#[derive(clap::Subcommand)]
+enum SkillAction {
+    /// List all skills in the unified directory.
+    List,
+
+    /// Show the content of a skill.
+    Show {
+        /// Skill name.
+        name: String,
+    },
+
+    /// Import a skill directory into the unified storage.
+    Add {
+        /// Skill name (must match frontmatter name).
+        name: String,
+        /// Source directory path.
+        #[arg(long = "from")]
+        from: String,
+    },
+
+    /// Remove a skill from the unified storage.
+    Remove {
+        /// Skill name to remove.
+        name: String,
+    },
+
+    /// Synchronise skills to target tools.
+    Sync {
+        /// Show what would change without writing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Only sync the specified tools (defaults to all).
+        #[arg(long = "tools", num_args = 1..)]
+        tools: Vec<String>,
     },
 }
 
@@ -344,6 +388,17 @@ impl Cli {
                 HookAction::List => commands::hook::run_hook_list(self.config.as_deref()),
                 HookAction::Sync { dry_run, tools } => {
                     commands::hook::run_hook_sync(dry_run, &tools, self.config.as_deref())
+                }
+            },
+            Commands::Skill { action } => match action {
+                SkillAction::List => commands::skill::run_skill_list(None),
+                SkillAction::Show { name } => commands::skill::run_skill_show(&name, None),
+                SkillAction::Add { name, from } => {
+                    commands::skill::run_skill_add(&name, &from, None)
+                }
+                SkillAction::Remove { name } => commands::skill::run_skill_remove(&name, None),
+                SkillAction::Sync { dry_run, tools } => {
+                    commands::skill::run_skill_sync(dry_run, &tools, None)
                 }
             },
         }

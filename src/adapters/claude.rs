@@ -31,11 +31,14 @@
 //! ```
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::adapters::{HooksAdapter, ToolAdapter, json_utils, kebab_to_pascal, pascal_to_kebab};
+use crate::adapters::{
+    HooksAdapter, SkillsAdapter, ToolAdapter, json_utils, kebab_to_pascal, pascal_to_kebab,
+};
 use crate::config::{HookHandler, HooksConfig, McpConfig};
 use crate::error::LorumError;
+use crate::skills::{SkillEntry, copy_dir_recursive, scan_skills_dir};
 
 /// Adapter for Claude Code.
 ///
@@ -43,12 +46,59 @@ use crate::error::LorumError;
 /// `~/.claude/settings.json` file, preserving any non-MCP fields.
 pub struct ClaudeAdapter;
 
+/// Adapter for Claude Code skills.
+pub struct ClaudeSkillsAdapter;
+
 /// Field name used by Claude Code for MCP servers.
 const MCP_FIELD: &str = "mcpServers";
 
 /// Returns the global Claude Code settings path: `~/.claude/settings.json`.
 fn global_settings_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".claude").join("settings.json"))
+}
+
+/// Returns the global Claude Code skills base dir: `~/.claude/skills/`.
+fn global_skills_dir() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".claude").join("skills"))
+}
+
+impl SkillsAdapter for ClaudeSkillsAdapter {
+    fn name(&self) -> &str {
+        "claude-code"
+    }
+
+    fn skills_base_dir(&self) -> Option<PathBuf> {
+        global_skills_dir()
+    }
+
+    fn read_skills(&self) -> Result<Vec<SkillEntry>, LorumError> {
+        let Some(dir) = self.skills_base_dir() else {
+            return Ok(Vec::new());
+        };
+        scan_skills_dir(&dir)
+    }
+
+    fn write_skill(&self, name: &str, source_dir: &Path) -> Result<(), LorumError> {
+        let dir = self.skills_base_dir().ok_or_else(|| LorumError::Other {
+            message: "cannot determine home directory".into(),
+        })?;
+        let target = dir.join(name);
+        if target.exists() {
+            std::fs::remove_dir_all(&target)?;
+        }
+        copy_dir_recursive(source_dir, &target)
+    }
+
+    fn remove_skill(&self, name: &str) -> Result<(), LorumError> {
+        let dir = self.skills_base_dir().ok_or_else(|| LorumError::Other {
+            message: "cannot determine home directory".into(),
+        })?;
+        let target = dir.join(name);
+        if target.exists() {
+            std::fs::remove_dir_all(target)?;
+        }
+        Ok(())
+    }
 }
 
 impl HooksAdapter for ClaudeAdapter {
@@ -420,5 +470,40 @@ mod tests {
         let json = hooks_config_to_json_value(&config);
         let parsed = parse_hooks_from_json(Some(&json));
         assert_eq!(config, parsed);
+    }
+
+    // --- skills ------------------------------------------------------------
+
+    #[test]
+    fn skills_adapter_name() {
+        let adapter = ClaudeSkillsAdapter;
+        assert_eq!(adapter.name(), "claude-code");
+    }
+
+    #[test]
+    fn read_skills_empty_when_no_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("skills");
+        let skills = scan_skills_dir(&dir).unwrap();
+        assert!(skills.is_empty());
+    }
+
+    #[test]
+    fn write_skill_copies_directory_contents() {
+        let src = tempfile::tempdir().unwrap();
+        std::fs::write(
+            src.path().join("SKILL.md"),
+            "---\nname: test-skill\ndescription: \"Test\"\n---\n# Body\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(src.path().join("scripts")).unwrap();
+        std::fs::write(src.path().join("scripts/run.sh"), "echo hi\n").unwrap();
+
+        let dst_root = tempfile::tempdir().unwrap();
+        let target = dst_root.path().join("test-skill");
+        copy_dir_recursive(src.path(), &target).unwrap();
+
+        assert!(target.join("SKILL.md").exists());
+        assert!(target.join("scripts/run.sh").exists());
     }
 }
