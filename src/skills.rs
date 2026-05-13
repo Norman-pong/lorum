@@ -161,6 +161,52 @@ pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), LorumError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
+    use std::panic;
+
+    #[test]
+    #[serial]
+    fn global_skills_dir_uses_xdg_config_home() {
+        let tmp = tempfile::tempdir().unwrap();
+        let xdg = tmp.path().join("xdg_config");
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &xdg);
+        }
+
+        let result = panic::catch_unwind(|| {
+            let dir = global_skills_dir().unwrap();
+            assert_eq!(dir, xdg.join("lorum").join("skills"));
+        });
+
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+        result.unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn global_skills_dir_falls_back_to_home_dot_config() {
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+
+        let result = panic::catch_unwind(|| {
+            let dir = global_skills_dir().unwrap();
+            let home = dirs::home_dir().expect("home dir");
+            assert_eq!(dir, home.join(".config").join("lorum").join("skills"));
+        });
+
+        result.unwrap();
+    }
+
+    #[test]
+    fn project_skills_dir_returns_lorum_skills_subdir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let expected = root.join(".lorum").join("skills");
+        assert_eq!(project_skills_dir(root), expected);
+    }
 
     #[test]
     fn parse_valid_frontmatter() {

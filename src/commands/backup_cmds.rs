@@ -152,3 +152,58 @@ pub fn run_backup_restore(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_backup_create_empty_tools_all_false() {
+        // empty tools and all=false means all adapters are backed up
+        let result = run_backup_create(&[], false, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_backup_create_with_specific_tools() {
+        // Pass a nonexistent tool name — should warn but still return Ok
+        let result = run_backup_create(&["nonexistent-tool-xyz".into()], false, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn format_size_zero() {
+        assert_eq!(format_size(0), "0B");
+    }
+
+    #[test]
+    fn format_size_bytes() {
+        assert_eq!(format_size(512), "512B");
+    }
+
+    #[test]
+    fn format_size_kb() {
+        assert_eq!(format_size(1024), "1KB");
+    }
+
+    #[test]
+    fn format_size_mb() {
+        assert_eq!(format_size(1_048_576), "1MB");
+    }
+
+    #[test]
+    fn format_size_gb() {
+        assert_eq!(format_size(1_073_741_824), "1GB");
+    }
+
+    #[test]
+    fn format_size_fractional() {
+        // 1.5 KB
+        assert_eq!(format_size(1536), "1.5KB");
+    }
+
+    #[test]
+    fn format_size_large_gb() {
+        assert_eq!(format_size(2_147_483_648), "2GB");
+    }
+}

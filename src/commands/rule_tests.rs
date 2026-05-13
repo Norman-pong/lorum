@@ -320,3 +320,34 @@ fn rule_show_nonexistent_section_returns_error() {
 
     let _ = dir;
 }
+
+// ---------------------------------------------------------------------------
+// rule_sync
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rule_sync_dry_run_no_rules_file() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().to_path_buf();
+    let lorum_dir = root.join(".lorum");
+    fs::create_dir_all(&lorum_dir).unwrap();
+    // No RULES.md exists — load_rules will fail
+    let result = super::rule::rule_sync(&root, true, &[]);
+    assert!(result.is_err());
+}
+
+// ---------------------------------------------------------------------------
+// rule_import
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rule_import_tool_with_no_rules_file() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().to_path_buf();
+    let lorum_dir = root.join(".lorum");
+    fs::create_dir_all(&lorum_dir).unwrap();
+    // cursor adapter exists but likely has no rules file in this temp root
+    let result = super::rule::rule_import(&root, "cursor");
+    // Should return an error because cursor has no rules file here
+    assert!(result.is_err());
+}

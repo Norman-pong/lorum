@@ -163,3 +163,10 @@ fn remove_rejects_path_traversal_name() {
             .contains("invalid skill name")
     );
 }
+
+#[test]
+fn run_skill_sync_dry_run_empty_skills_dir() {
+    let dir = TempDir::new().unwrap();
+    // Use an empty project skills directory
+    skill::run_skill_sync(true, &[], Some(dir.path())).unwrap();
+}

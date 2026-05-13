@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use serial_test::serial;
 use tempfile::TempDir;
 
 use crate::config::{self, LorumConfig, McpConfig, McpServer};
@@ -168,6 +169,119 @@ fn check_empty_config_is_valid() {
     let (_dir, config_path) = setup_temp_config(Some(&initial));
 
     super::run_check(Some(&path_str(&config_path))).unwrap();
+}
+
+// ---- run_sync tests ----
+
+#[test]
+fn run_sync_dry_run_empty_config() {
+    let dir = TempDir::new().unwrap();
+    let config_path = dir.path().join("config.yaml");
+    // Create an empty config file so resolve_effective_config_from_cwd succeeds
+    config::save_config(&config_path, &config::LorumConfig::default()).unwrap();
+    // dry_run with empty config should not panic and return Ok
+    super::run_sync(true, &[], false, Some(config_path.to_str().unwrap())).unwrap();
+}
+
+// ---- run_backup_create tests ----
+
+#[test]
+fn run_backup_create_empty_tools_all_false() {
+    // empty tools and all=false means all adapters are backed up
+    // Should not panic; may create 0 backups if no adapter configs exist
+    let result = super::run_backup_create(&[], false, None);
+    // The function always returns Ok(())
+    assert!(result.is_ok());
+}
+
+// ---- load_config_or_default tests ----
+
+#[test]
+fn load_config_or_default_nonexistent_path_returns_default() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("nonexistent.yaml");
+    let cfg = super::load_config_or_default(&path).unwrap();
+    assert_eq!(cfg, config::LorumConfig::default());
+}
+
+#[test]
+fn load_config_or_default_existing_path_loads_config() {
+    let initial = config::LorumConfig {
+        mcp: McpConfig {
+            servers: {
+                let mut m = BTreeMap::new();
+                m.insert("srv".into(), make_server("cmd", &[], &[]));
+                m
+            },
+        },
+        ..Default::default()
+    };
+    let (_dir, config_path) = setup_temp_config(Some(&initial));
+    let cfg = super::load_config_or_default(&config_path).unwrap();
+    assert_eq!(cfg.mcp.servers.len(), 1);
+    assert!(cfg.mcp.servers.contains_key("srv"));
+}
+
+// ---- resolve_path tests ----
+
+#[test]
+fn resolve_path_with_some_returns_path() {
+    let result = super::resolve_path(Some("/tmp/test-config.yaml")).unwrap();
+    assert_eq!(result, std::path::PathBuf::from("/tmp/test-config.yaml"));
+}
+
+#[test]
+#[serial]
+fn resolve_path_with_none_returns_global() {
+    let dir = TempDir::new().unwrap();
+    let original = std::env::var_os("XDG_CONFIG_HOME");
+    unsafe {
+        std::env::set_var("XDG_CONFIG_HOME", dir.path());
+    }
+    let result = super::resolve_path(None).unwrap();
+    assert_eq!(result, dir.path().join("lorum").join("config.yaml"));
+    unsafe {
+        match original {
+            Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+    }
+}
+
+// ---- mcp_status tests ----
+
+#[test]
+fn mcp_status_tool_with_no_config() {
+    // "nonexistent-tool" has no adapter, so mcp_status returns None
+    let result = super::mcp_status("nonexistent-tool");
+    assert!(result.is_none());
+}
+
+// ---- rules_status tests ----
+
+#[test]
+fn rules_status_tool_with_no_config() {
+    // "nonexistent-tool" has no rules adapter, so rules_status returns None
+    let result = super::rules_status("nonexistent-tool", Some(std::path::Path::new("/tmp")));
+    assert!(result.is_none());
+}
+
+// ---- hooks_status tests ----
+
+#[test]
+fn hooks_status_tool_with_no_config() {
+    // "nonexistent-tool" has no hooks adapter, so hooks_status returns None
+    let result = super::hooks_status("nonexistent-tool");
+    assert!(result.is_none());
+}
+
+// ---- skills_status tests ----
+
+#[test]
+fn skills_status_tool_with_no_config() {
+    // "nonexistent-tool" has no skills adapter, so skills_status returns None
+    let result = super::skills_status("nonexistent-tool");
+    assert!(result.is_none());
 }
 
 // ---- Status tests ----

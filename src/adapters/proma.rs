@@ -257,4 +257,20 @@ mod tests {
         assert!(target.join("SKILL.md").exists());
         assert!(target.join("references/info.md").exists());
     }
+
+    #[test]
+    #[serial_test::serial]
+    fn remove_skill_deletes_directory() {
+        let workspace = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("PROMA_WORKSPACE_ROOT", workspace.path()) };
+        let skills_dir = workspace.path().join("skills").join("test-skill");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+        std::fs::write(skills_dir.join("SKILL.md"), "# Skill\n").unwrap();
+        assert!(skills_dir.exists());
+
+        let adapter = PromaSkillsAdapter;
+        adapter.remove_skill("test-skill").unwrap();
+        assert!(!skills_dir.exists());
+        unsafe { std::env::remove_var("PROMA_WORKSPACE_ROOT") };
+    }
 }

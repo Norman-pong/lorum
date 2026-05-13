@@ -258,7 +258,132 @@ fn parse_timestamp(ts: &str) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::fs;
+    use std::panic;
+
+    #[test]
+    #[serial]
+    fn backup_dir_uses_xdg_config_home() {
+        let tmp = tempfile::tempdir().unwrap();
+        let xdg = tmp.path().join("xdg_config");
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &xdg);
+        }
+
+        let result = panic::catch_unwind(|| {
+            let dir = backup_dir().unwrap();
+            assert_eq!(dir, xdg.join("lorum").join("backups"));
+        });
+
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+        result.unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn backup_dir_falls_back_to_home_dot_config() {
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+
+        let result = panic::catch_unwind(|| {
+            let dir = backup_dir().unwrap();
+            let home = dirs::home_dir().expect("home dir");
+            assert_eq!(dir, home.join(".config").join("lorum").join("backups"));
+        });
+
+        result.unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn create_backup_creates_file_and_prunes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let xdg = tmp.path().join("xdg_config");
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &xdg);
+        }
+
+        let result = panic::catch_unwind(|| {
+            let source = tmp.path().join("settings.json");
+            fs::write(&source, r#"{"test": true}"#).unwrap();
+
+            let backup_path = create_backup("test-tool", &source).unwrap();
+            assert!(backup_path.exists());
+            assert_eq!(
+                fs::read_to_string(&backup_path).unwrap(),
+                r#"{"test": true}"#
+            );
+            assert!(backup_path.to_string_lossy().contains("test-tool-"));
+            assert_eq!(backup_path.extension().unwrap(), "json");
+        });
+
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+        result.unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn restore_backup_restores_latest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let xdg = tmp.path().join("xdg_config");
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &xdg);
+        }
+
+        let result = panic::catch_unwind(|| {
+            let source = tmp.path().join("settings.json");
+            fs::write(&source, "original").unwrap();
+
+            // Create first backup
+            let _ = create_backup("restore-tool", &source).unwrap();
+            // Modify source
+            fs::write(&source, "modified").unwrap();
+            // Create second backup
+            let _ = create_backup("restore-tool", &source).unwrap();
+
+            // Restore to a new target
+            let target = tmp.path().join("restored.json");
+            restore_backup("restore-tool", &target).unwrap();
+            assert_eq!(fs::read_to_string(&target).unwrap(), "modified");
+        });
+
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+        result.unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn restore_backup_from_path_works() {
+        let tmp = tempfile::tempdir().unwrap();
+        let xdg = tmp.path().join("xdg_config");
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &xdg);
+        }
+
+        let result = panic::catch_unwind(|| {
+            let source = tmp.path().join("settings.json");
+            fs::write(&source, "specific backup").unwrap();
+
+            let backup_path = create_backup("specific-tool", &source).unwrap();
+
+            let target = tmp.path().join("restored.json");
+            restore_backup_from_path(&backup_path, &target).unwrap();
+            assert_eq!(fs::read_to_string(&target).unwrap(), "specific backup");
+        });
+
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+        result.unwrap();
+    }
 
     #[test]
     fn timestamp_format_is_yyyymmdd_hhmmss() {

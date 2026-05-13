@@ -274,3 +274,131 @@ pub(crate) mod test_utils {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn all_adapters_returns_known_adapters() {
+        let adapters = all_adapters();
+        assert!(!adapters.is_empty());
+        let names: Vec<_> = adapters.iter().map(|a| a.name()).collect();
+        assert!(names.contains(&"claude-code"));
+        assert!(names.contains(&"codex"));
+        assert!(names.contains(&"proma"));
+        assert!(names.contains(&"kimi"));
+        assert!(names.contains(&"trae"));
+    }
+
+    #[test]
+    fn find_adapter_finds_known() {
+        assert_eq!(find_adapter("claude-code").unwrap().name(), "claude-code");
+        assert_eq!(find_adapter("codex").unwrap().name(), "codex");
+        assert_eq!(find_adapter("proma").unwrap().name(), "proma");
+        assert_eq!(find_adapter("kimi").unwrap().name(), "kimi");
+        assert_eq!(find_adapter("trae").unwrap().name(), "trae");
+    }
+
+    #[test]
+    fn find_adapter_returns_none_for_unknown() {
+        assert!(find_adapter("nonexistent-tool").is_none());
+    }
+
+    #[test]
+    fn all_rules_adapters_returns_three() {
+        let adapters = all_rules_adapters();
+        assert_eq!(adapters.len(), 3);
+        let names: Vec<_> = adapters.iter().map(|a| a.name()).collect();
+        assert!(names.contains(&"cursor"));
+        assert!(names.contains(&"windsurf"));
+        assert!(names.contains(&"codex"));
+    }
+
+    #[test]
+    fn find_rules_adapter_finds_known() {
+        assert_eq!(find_rules_adapter("cursor").unwrap().name(), "cursor");
+        assert_eq!(find_rules_adapter("windsurf").unwrap().name(), "windsurf");
+        assert_eq!(find_rules_adapter("codex").unwrap().name(), "codex");
+    }
+
+    #[test]
+    fn find_rules_adapter_returns_none_for_unknown() {
+        assert!(find_rules_adapter("nonexistent").is_none());
+    }
+
+    #[test]
+    fn all_hooks_adapters_returns_two() {
+        let adapters = all_hooks_adapters();
+        assert_eq!(adapters.len(), 2);
+        let names: Vec<_> = adapters.iter().map(|a| a.name()).collect();
+        assert!(names.contains(&"claude-code"));
+        assert!(names.contains(&"kimi"));
+    }
+
+    #[test]
+    fn find_hooks_adapter_finds_known() {
+        assert_eq!(
+            find_hooks_adapter("claude-code").unwrap().name(),
+            "claude-code"
+        );
+        assert_eq!(find_hooks_adapter("kimi").unwrap().name(), "kimi");
+    }
+
+    #[test]
+    fn find_hooks_adapter_returns_none_for_unknown() {
+        assert!(find_hooks_adapter("nonexistent").is_none());
+    }
+
+    #[test]
+    fn all_skills_adapters_returns_two() {
+        let adapters = all_skills_adapters();
+        assert_eq!(adapters.len(), 2);
+        let names: Vec<_> = adapters.iter().map(|a| a.name()).collect();
+        assert!(names.contains(&"claude-code"));
+        assert!(names.contains(&"proma"));
+    }
+
+    #[test]
+    fn find_skills_adapter_finds_known() {
+        assert_eq!(
+            find_skills_adapter("claude-code").unwrap().name(),
+            "claude-code"
+        );
+        assert_eq!(find_skills_adapter("proma").unwrap().name(), "proma");
+    }
+
+    #[test]
+    fn find_skills_adapter_returns_none_for_unknown() {
+        assert!(find_skills_adapter("nonexistent").is_none());
+    }
+
+    #[test]
+    fn read_rules_file_reads_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rules.md");
+        fs::write(&path, "# Rules\n").unwrap();
+        let result = read_rules_file(&path).unwrap();
+        assert_eq!(result, Some("# Rules\n".to_string()));
+    }
+
+    #[test]
+    fn read_rules_file_returns_none_for_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing.md");
+        let result = read_rules_file(&path).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn write_rules_file_creates_file_and_parents() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("rules.md");
+        assert!(!path.exists());
+        write_rules_file(&path, "# New Rules\n").unwrap();
+        assert!(path.exists());
+        let content = fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "# New Rules\n");
+    }
+}

@@ -215,6 +215,16 @@ fn list_empty_config_outputs_no_hooks() {
 }
 
 #[test]
+fn run_hook_sync_dry_run_empty_config() {
+    let dir = TempDir::new().unwrap();
+    let config_path = dir.path().join("config.yaml");
+    // Create an empty config file so load_config succeeds
+    config::save_config(&config_path, &config::LorumConfig::default()).unwrap();
+    // dry_run with empty config should not panic and return Ok
+    hook::run_hook_sync(true, &[], Some(config_path.to_str().unwrap())).unwrap();
+}
+
+#[test]
 fn list_outputs_hooks() {
     let mut initial = LorumConfig::default();
     initial.hooks.events.insert(

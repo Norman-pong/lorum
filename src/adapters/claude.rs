@@ -506,4 +506,24 @@ mod tests {
         assert!(target.join("SKILL.md").exists());
         assert!(target.join("scripts/run.sh").exists());
     }
+
+    #[test]
+    #[serial_test::serial]
+    fn remove_skill_deletes_directory() {
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", home.path()) };
+        let skills_dir = home
+            .path()
+            .join(".claude")
+            .join("skills")
+            .join("test-skill");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+        std::fs::write(skills_dir.join("SKILL.md"), "# Skill\n").unwrap();
+        assert!(skills_dir.exists());
+
+        let adapter = ClaudeSkillsAdapter;
+        adapter.remove_skill("test-skill").unwrap();
+        assert!(!skills_dir.exists());
+        unsafe { std::env::remove_var("HOME") };
+    }
 }

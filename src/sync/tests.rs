@@ -341,3 +341,102 @@ fn dry_run_hooks_tools_unknown_tool_returns_error() {
             .contains("adapter not found")
     );
 }
+
+// ---------------------------------------------------------------------------
+// Skills sync tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dry_run_skills_all_returns_results_for_all_adapters() {
+    let dir = tempfile::tempdir().unwrap();
+    let results = dry_run_skills_all(dir.path());
+    assert_eq!(results.len(), all_skills_adapters().len());
+    for result in &results {
+        assert!(!result.tool.is_empty());
+    }
+}
+
+#[test]
+fn dry_run_skills_tools_returns_results_for_specified_tools() {
+    let dir = tempfile::tempdir().unwrap();
+    let results = dry_run_skills_tools(dir.path(), &["claude-code".into()]);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].tool, "claude-code");
+}
+
+#[test]
+fn dry_run_skills_tools_unknown_tool_returns_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let results = dry_run_skills_tools(dir.path(), &["nonexistent-tool".into()]);
+    assert_eq!(results.len(), 1);
+    assert!(!results[0].success);
+    assert!(
+        results[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("adapter not found")
+    );
+}
+
+#[test]
+fn dry_run_skills_all_with_skills_detects_updates() {
+    let dir = tempfile::tempdir().unwrap();
+    let skill_dir = dir.path().join("test-skill");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: test-skill\ndescription: \"Test\"\n---\n# Body\n",
+    )
+    .unwrap();
+
+    let results = dry_run_skills_all(dir.path());
+    assert_eq!(results.len(), all_skills_adapters().len());
+    for result in &results {
+        assert!(result.success);
+        // Source has one skill that is not present in target, so it should
+        // report one skill to update.
+        assert_eq!(
+            result.skills_to_update, 1,
+            "tool {} should report 1 skill to update",
+            result.tool
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Additional dry-run tests for MCP and hooks
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dry_run_tools_returns_results_for_specified_tools() {
+    let config = McpConfig::default();
+    let results = dry_run_tools(&config, &["claude-code".into()]);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].tool, "claude-code");
+}
+
+#[test]
+fn dry_run_tools_unknown_tool_returns_error() {
+    let config = McpConfig::default();
+    let results = dry_run_tools(&config, &["nonexistent-tool".into()]);
+    assert_eq!(results.len(), 1);
+    assert!(!results[0].success);
+    assert!(
+        results[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("adapter not found")
+    );
+}
+
+#[test]
+fn dry_run_hooks_all_returns_results_for_all_adapters() {
+    let config = HooksConfig::default();
+    let results = dry_run_hooks_all(&config);
+    assert_eq!(results.len(), all_hooks_adapters().len());
+    for result in &results {
+        assert!(!result.tool.is_empty());
+    }
+}
