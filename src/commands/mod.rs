@@ -87,6 +87,9 @@ fn detect_installed_tools() -> Vec<String> {
         if home.join(".config").join("opencode").exists() {
             tools.push("opencode".into());
         }
+        if home.join(".continue").exists() {
+            tools.push("continue".into());
+        }
     }
     if std::env::current_dir()
         .map(|d| d.join(".trae").exists())
@@ -105,6 +108,9 @@ fn detect_installed_tools() -> Vec<String> {
     }
     if command_exists("opencode") {
         tools.push("opencode".into());
+    }
+    if command_exists("continue") {
+        tools.push("continue".into());
     }
     tools.sort();
     tools.dedup();

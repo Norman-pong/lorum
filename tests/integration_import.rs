@@ -135,11 +135,12 @@ DATA_DIR = "/tmp/memory"
 #[test]
 fn all_adapters_registered() {
     let adapters = all_adapters();
-    assert_eq!(adapters.len(), 8);
+    assert_eq!(adapters.len(), 9);
 
     let names: Vec<&str> = adapters.iter().map(|a| a.name()).collect();
     assert!(names.contains(&"claude-code"));
     assert!(names.contains(&"codex"));
+    assert!(names.contains(&"continue"));
     assert!(names.contains(&"cursor"));
     assert!(names.contains(&"proma"));
     assert!(names.contains(&"kimi"));

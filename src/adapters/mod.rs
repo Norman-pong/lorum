@@ -16,6 +16,7 @@ use crate::skills::SkillEntry;
 
 pub mod claude;
 pub mod codex;
+pub mod continue_dev;
 pub mod cursor;
 pub mod json_utils;
 pub mod kimi;
@@ -65,6 +66,7 @@ static ALL_ADAPTERS: LazyLock<Vec<Box<dyn ToolAdapter>>> = LazyLock::new(|| {
     vec![
         Box::new(claude::ClaudeAdapter),
         Box::new(codex::CodexAdapter),
+        Box::new(continue_dev::ContinueDevAdapter::new()),
         Box::new(cursor::CursorAdapter::new()),
         Box::new(proma::PromaAdapter),
         Box::new(kimi::KimiAdapter),
@@ -370,10 +372,11 @@ mod tests {
     #[test]
     fn all_adapters_returns_known_adapters() {
         let adapters = all_adapters();
-        assert_eq!(adapters.len(), 8);
+        assert_eq!(adapters.len(), 9);
         let names: Vec<_> = adapters.iter().map(|a| a.name()).collect();
         assert!(names.contains(&"claude-code"));
         assert!(names.contains(&"codex"));
+        assert!(names.contains(&"continue"));
         assert!(names.contains(&"cursor"));
         assert!(names.contains(&"proma"));
         assert!(names.contains(&"kimi"));
@@ -386,6 +389,7 @@ mod tests {
     fn find_adapter_finds_known() {
         assert_eq!(find_adapter("claude-code").unwrap().name(), "claude-code");
         assert_eq!(find_adapter("codex").unwrap().name(), "codex");
+        assert_eq!(find_adapter("continue").unwrap().name(), "continue");
         assert_eq!(find_adapter("cursor").unwrap().name(), "cursor");
         assert_eq!(find_adapter("proma").unwrap().name(), "proma");
         assert_eq!(find_adapter("kimi").unwrap().name(), "kimi");

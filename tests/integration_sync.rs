@@ -86,12 +86,13 @@ fn sync_produces_results_for_all_adapters() {
     };
 
     let results = sync::sync_all(&mcp);
-    // We have 8 registered adapters.
-    assert_eq!(results.len(), 8);
+    // We have 9 registered adapters.
+    assert_eq!(results.len(), 9);
 
     let names: Vec<&str> = results.iter().map(|r| r.tool.as_str()).collect();
     assert!(names.contains(&"claude-code"));
     assert!(names.contains(&"codex"));
+    assert!(names.contains(&"continue"));
     assert!(names.contains(&"cursor"));
     assert!(names.contains(&"proma"));
     assert!(names.contains(&"kimi"));
