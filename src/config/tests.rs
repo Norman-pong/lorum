@@ -364,7 +364,9 @@ fn load_project_config_reads_valid_file() {
         "mcp:\n  servers:\n    proj-srv:\n      command: python\nexclude:\n  - old-srv\n",
     );
 
-    let config = load_project_config(&path).unwrap();
+    let config = load_project_config(&path)
+        .unwrap()
+        .expect("should load project config");
     assert_eq!(config.mcp.servers.len(), 1);
     assert_eq!(config.mcp.servers["proj-srv"].command, "python");
     assert_eq!(config.exclude, vec!["old-srv"]);

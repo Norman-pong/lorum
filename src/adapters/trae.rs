@@ -26,16 +26,40 @@ use crate::error::LorumError;
 ///
 /// Reads and writes MCP server configurations from Trae's
 /// project-level `.trae/mcp.json` file, preserving any non-MCP fields.
-pub struct TraeAdapter;
+pub struct TraeAdapter {
+    project_root: Option<PathBuf>,
+}
 
 /// Field name used by Trae for MCP servers.
 const MCP_FIELD: &str = "mcpServers";
 
-/// Returns the project-level Trae config path: `.trae/mcp.json`.
-fn project_config_path() -> Option<PathBuf> {
-    std::env::current_dir()
-        .ok()
-        .map(|cwd| cwd.join(".trae").join("mcp.json"))
+impl TraeAdapter {
+    /// Create a new adapter that uses the current working directory.
+    pub fn new() -> Self {
+        Self { project_root: None }
+    }
+
+    /// Create an adapter with an explicit project root.
+    pub fn with_project_root(root: PathBuf) -> Self {
+        Self {
+            project_root: Some(root),
+        }
+    }
+
+    /// Returns the project-level Trae config path: `.trae/mcp.json`.
+    fn project_config_path(&self) -> Option<PathBuf> {
+        let root = self
+            .project_root
+            .clone()
+            .or_else(|| std::env::current_dir().ok())?;
+        Some(root.join(".trae").join("mcp.json"))
+    }
+}
+
+impl Default for TraeAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ToolAdapter for TraeAdapter {
@@ -44,11 +68,11 @@ impl ToolAdapter for TraeAdapter {
     }
 
     fn config_paths(&self) -> Vec<PathBuf> {
-        project_config_path().into_iter().collect()
+        self.project_config_path().into_iter().collect()
     }
 
     fn read_mcp(&self) -> Result<McpConfig, LorumError> {
-        let path = match project_config_path() {
+        let path = match self.project_config_path() {
             Some(p) => p,
             None => return Ok(McpConfig::default()),
         };
@@ -60,11 +84,11 @@ impl ToolAdapter for TraeAdapter {
     }
 
     fn write_mcp(&self, config: &McpConfig) -> Result<(), LorumError> {
-        let path = match project_config_path() {
+        let path = match self.project_config_path() {
             Some(p) => p,
             None => {
                 return Err(LorumError::Other {
-                    message: "cannot determine current directory".into(),
+                    message: "cannot determine project directory".into(),
                 });
             }
         };
@@ -183,7 +207,16 @@ mod tests {
 
     #[test]
     fn adapter_name() {
-        let adapter = TraeAdapter;
+        let adapter = TraeAdapter::new();
         assert_eq!(adapter.name(), "trae");
+    }
+
+    #[test]
+    fn with_project_root_overrides_cwd() {
+        let dir = tempfile::tempdir().unwrap();
+        let adapter = TraeAdapter::with_project_root(dir.path().to_path_buf());
+        let paths = adapter.config_paths();
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0], dir.path().join(".trae").join("mcp.json"));
     }
 }

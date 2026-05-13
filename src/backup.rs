@@ -36,15 +36,9 @@ pub struct BackupInfo {
 ///
 /// Returns [`LorumError::Other`] if the config directory cannot be determined.
 pub fn backup_dir() -> Result<PathBuf, LorumError> {
-    let config_dir = if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        PathBuf::from(xdg)
-    } else {
-        let home = dirs::home_dir().ok_or_else(|| LorumError::Other {
-            message: "cannot determine home directory".into(),
-        })?;
-        home.join(".config")
-    };
-    Ok(config_dir.join("lorum").join("backups"))
+    Ok(crate::config::resolve_config_dir()?
+        .join("lorum")
+        .join("backups"))
 }
 
 /// Create a backup of a file before overwriting.
@@ -125,7 +119,11 @@ fn cleanup_old_backups(tool_name: &str, dir: &Path) -> Result<(), LorumError> {
     let mut backups = list_backups_in_dir(tool_name, dir)?;
     if backups.len() > MAX_BACKUPS {
         for old in backups.drain(MAX_BACKUPS..) {
-            let _ = fs::remove_file(old.path); // best effort
+            if let Err(e) = fs::remove_file(&old.path) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    return Err(LorumError::Io { source: e });
+                }
+            }
         }
     }
     Ok(())
@@ -399,6 +397,40 @@ mod tests {
         assert_eq!(epoch_to_utc(0), (1970, 1, 1, 0, 0, 0));
         // 2000-01-01 00:00:00 UTC = 946684800
         assert_eq!(epoch_to_utc(946_684_800), (2000, 1, 1, 0, 0, 0));
+    }
+
+    #[test]
+    fn epoch_to_utc_leap_year_2024() {
+        // 2024-02-29 00:00:00 UTC
+        // Days from 1970-01-01 to 2024-02-29:
+        // 1970-2023 = 54 years = 19 leap + 35 normal = 19*366 + 35*365 = 6954 + 12775 = 19729 days
+        // Jan 1970 = 31, Feb 1970 = 28, ... up to Jan 2024 = 31, then Feb 1-28 = 28
+        // Total days = 19729 + 31 + 28 = 19788 days before 2024-02-29
+        // Actually let's compute: use a known reference
+        // 2024-01-01 00:00:00 UTC = 1704067200
+        // 2024-02-01 00:00:00 UTC = 1706745600 (31 days later)
+        // 2024-02-29 00:00:00 UTC = 1709164800 (28 days after Feb 1)
+        assert_eq!(epoch_to_utc(1_709_164_800), (2024, 2, 29, 0, 0, 0));
+    }
+
+    #[test]
+    fn epoch_to_utc_non_leap_century_2100() {
+        // 2100-03-01 00:00:00 UTC
+        // 2100 is not a leap year (divisible by 100 but not 400)
+        // So Feb 2100 has 28 days, and 2100-03-01 follows 2100-02-28
+        // Reference: https://www.unixtimestamp.com/
+        // 2100-03-01 00:00:00 UTC = 4107542400
+        assert_eq!(epoch_to_utc(4_107_542_400), (2100, 3, 1, 0, 0, 0));
+    }
+
+    #[test]
+    fn epoch_to_utc_leap_century_2000() {
+        // 2000-02-29 00:00:00 UTC
+        // 2000 IS a leap year (divisible by 400)
+        // 2000-01-01 = 946684800, Jan has 31 days
+        // 2000-02-01 = 946684800 + 31*86400 = 946684800 + 2678400 = 949363200
+        // 2000-02-29 = 949363200 + 28*86400 = 949363200 + 2419200 = 951782400
+        assert_eq!(epoch_to_utc(951_782_400), (2000, 2, 29, 0, 0, 0));
     }
 
     #[test]

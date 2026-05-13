@@ -72,6 +72,9 @@ fn validate_skill_name(name: &str) -> Result<(), LorumError> {
         || name == "."
         || name == ".."
         || name.contains("..")
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
     {
         return Err(LorumError::Other {
             message: format!("invalid skill name: {name}"),

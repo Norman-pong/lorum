@@ -32,15 +32,9 @@ pub struct SkillEntry {
 
 /// Returns the global skills directory: `~/.config/lorum/skills/`.
 pub fn global_skills_dir() -> Result<PathBuf, LorumError> {
-    let config_dir = if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        PathBuf::from(xdg)
-    } else {
-        let home = dirs::home_dir().ok_or_else(|| LorumError::Other {
-            message: "cannot determine home directory".into(),
-        })?;
-        home.join(".config")
-    };
-    Ok(config_dir.join("lorum").join("skills"))
+    Ok(crate::config::resolve_config_dir()?
+        .join("lorum")
+        .join("skills"))
 }
 
 /// Returns the project-level skills directory: `<project_root>/.lorum/skills/`.
@@ -63,7 +57,9 @@ pub fn parse_skill_manifest(content: &str, path: &Path) -> Result<SkillManifest,
         })?;
 
     // Trim a single leading newline after the opening ---.
-    let rest = rest.strip_prefix('\n').unwrap_or(rest);
+    let rest = rest.strip_prefix('\n').ok_or_else(|| LorumError::Other {
+        message: format!("{} frontmatter must start with '---\\n'", path.display()),
+    })?;
 
     let end = rest.find("\n---").ok_or_else(|| LorumError::Other {
         message: format!("{} frontmatter must be closed with '---'", path.display()),
@@ -227,6 +223,19 @@ mod tests {
     fn parse_frontmatter_missing_close() {
         let content = "---\nname: my-skill\nBody\n";
         assert!(parse_skill_manifest(content, Path::new("SKILL.md")).is_err());
+    }
+
+    #[test]
+    fn parse_frontmatter_missing_newline_after_open() {
+        let content = "---name: my-skill\n---\nBody\n";
+        let result = parse_skill_manifest(content, Path::new("SKILL.md"));
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("frontmatter must start with '---\\n'"),
+            "error should mention missing newline: {}",
+            err_msg
+        );
     }
 
     #[test]

@@ -43,7 +43,11 @@ fn workspace_skills_dir() -> Option<PathBuf> {
         .ok()
         .map(PathBuf::from)
         .or_else(|| {
-            dirs::home_dir().map(|h| h.join(".proma").join("agent-workspaces").join("lorum"))
+            dirs::home_dir().map(|h| {
+                h.join(".proma")
+                    .join("agent-workspaces")
+                    .join(env!("CARGO_PKG_NAME"))
+            })
         })
         .map(|root| root.join("skills"))
 }

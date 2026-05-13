@@ -407,7 +407,9 @@ exclude:
 "#;
     fs::write(&config_path, yaml).unwrap();
 
-    let loaded = load_project_config(&config_path).unwrap();
+    let loaded = load_project_config(&config_path)
+        .unwrap()
+        .expect("should load project config");
     assert_eq!(loaded.mcp.servers.len(), 1);
     assert_eq!(loaded.mcp.servers["local-srv"].command, "./run.sh");
     assert_eq!(loaded.exclude, vec!["remote-heavy"]);

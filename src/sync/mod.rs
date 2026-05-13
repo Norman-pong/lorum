@@ -86,7 +86,7 @@ pub struct DryRunResult {
 pub fn sync_all(mcp_config: &McpConfig) -> Vec<SyncResult> {
     let mut results = Vec::new();
     for adapter in all_adapters() {
-        let result = sync_tool(&*adapter, mcp_config);
+        let result = sync_tool(adapter.as_ref(), mcp_config);
         results.push(result);
     }
     results
@@ -100,7 +100,7 @@ pub fn sync_tools(mcp_config: &McpConfig, tool_names: &[String]) -> Vec<SyncResu
     let mut results = Vec::new();
     for name in tool_names {
         match find_adapter(name) {
-            Some(adapter) => results.push(sync_tool(&*adapter, mcp_config)),
+            Some(adapter) => results.push(sync_tool(adapter, mcp_config)),
             None => {
                 let err = LorumError::AdapterNotFound { name: name.clone() };
                 results.push(SyncResult {
@@ -123,8 +123,12 @@ fn sync_tool(adapter: &dyn ToolAdapter, mcp_config: &McpConfig) -> SyncResult {
     for path in adapter.config_paths() {
         if path.exists() {
             if let Err(e) = crate::backup::create_backup(&name, &path) {
-                // Backup failure should not block the sync, but log a warning.
-                eprintln!("warning: failed to backup {}: {e}", path.display());
+                return SyncResult {
+                    tool: name,
+                    success: false,
+                    servers_synced: 0,
+                    error: Some(format!("backup failed: {e}")),
+                };
             }
         }
     }
@@ -279,7 +283,7 @@ pub struct RulesDryRunResult {
 pub fn sync_rules_all(project_root: &Path, content: &str) -> Vec<RulesSyncResult> {
     let mut results = Vec::new();
     for adapter in all_rules_adapters() {
-        let result = sync_rules_adapter(&*adapter, project_root, content);
+        let result = sync_rules_adapter(adapter.as_ref(), project_root, content);
         results.push(result);
     }
     results
@@ -298,7 +302,7 @@ pub fn sync_rules_tools(
     for name in tool_names {
         match find_rules_adapter(name) {
             Some(adapter) => {
-                let result = sync_rules_adapter(&*adapter, project_root, content);
+                let result = sync_rules_adapter(adapter, project_root, content);
                 results.push(result);
             }
             None => {
@@ -328,8 +332,11 @@ fn sync_rules_adapter(
     // Backup existing file before overwriting.
     if path.exists() {
         if let Err(e) = crate::backup::create_backup(&name, &path) {
-            // Backup failure should not block the sync, but log a warning.
-            eprintln!("warning: failed to backup {}: {e}", path.display());
+            return RulesSyncResult {
+                tool: name,
+                success: false,
+                error: Some(format!("backup failed: {e}")),
+            };
         }
     }
 
@@ -458,7 +465,7 @@ pub struct HooksDryRunResult {
 pub fn sync_hooks_all(hooks_config: &HooksConfig) -> Vec<HooksSyncResult> {
     let mut results = Vec::new();
     for adapter in all_hooks_adapters() {
-        let result = sync_hooks_adapter(&*adapter, hooks_config);
+        let result = sync_hooks_adapter(adapter.as_ref(), hooks_config);
         results.push(result);
     }
     results
@@ -473,7 +480,7 @@ pub fn sync_hooks_tools(hooks_config: &HooksConfig, tool_names: &[String]) -> Ve
     for name in tool_names {
         match find_hooks_adapter(name) {
             Some(adapter) => {
-                let result = sync_hooks_adapter(&*adapter, hooks_config);
+                let result = sync_hooks_adapter(adapter, hooks_config);
                 results.push(result);
             }
             None => {
@@ -499,7 +506,11 @@ fn sync_hooks_adapter(adapter: &dyn HooksAdapter, hooks_config: &HooksConfig) ->
     for path in adapter.config_paths() {
         if path.exists() {
             if let Err(e) = crate::backup::create_backup(&name, &path) {
-                eprintln!("warning: failed to backup {}: {}", path.display(), e);
+                return HooksSyncResult {
+                    tool: name,
+                    success: false,
+                    error: Some(format!("backup failed: {e}")),
+                };
             }
         }
     }
@@ -634,7 +645,7 @@ pub struct SkillsDryRunResult {
 pub fn sync_skills_all(skills_dir: &std::path::Path) -> Vec<SkillsSyncResult> {
     let mut results = Vec::new();
     for adapter in all_skills_adapters() {
-        let result = sync_skills_adapter(&*adapter, skills_dir);
+        let result = sync_skills_adapter(adapter.as_ref(), skills_dir);
         results.push(result);
     }
     results
@@ -652,7 +663,7 @@ pub fn sync_skills_tools(
     for name in tool_names {
         match find_skills_adapter(name) {
             Some(adapter) => {
-                let result = sync_skills_adapter(&*adapter, skills_dir);
+                let result = sync_skills_adapter(adapter, skills_dir);
                 results.push(result);
             }
             None => {
@@ -702,9 +713,19 @@ fn sync_skills_adapter(
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs();
-                let backup = base.join(format!("{skill_name}.backup-{ts}"));
+                let mut backup = base.join(format!("{skill_name}.backup-{ts}"));
+                let mut counter = 1u32;
+                while backup.exists() {
+                    backup = base.join(format!("{skill_name}.backup-{ts}-{counter}"));
+                    counter += 1;
+                }
                 if let Err(e) = std::fs::rename(&target, &backup) {
-                    eprintln!("warning: failed to backup skill {}: {}", skill_name, e);
+                    return SkillsSyncResult {
+                        tool: name.clone(),
+                        success: false,
+                        skills_synced: 0,
+                        error: Some(format!("backup failed for skill {skill_name}: {e}")),
+                    };
                 }
             }
         }
@@ -712,10 +733,12 @@ fn sync_skills_adapter(
         match adapter.write_skill(skill_name, &skill.dir_path) {
             Ok(()) => synced += 1,
             Err(e) => {
-                eprintln!(
-                    "warning: failed to sync skill {} to {}: {}",
-                    skill_name, name, e
-                );
+                return SkillsSyncResult {
+                    tool: name.clone(),
+                    success: false,
+                    skills_synced: synced,
+                    error: Some(format!("failed to sync skill {skill_name} to {name}: {e}")),
+                };
             }
         }
     }
@@ -743,7 +766,7 @@ fn sync_skills_adapter(
 pub fn dry_run_skills_all(skills_dir: &std::path::Path) -> Vec<SkillsDryRunResult> {
     let mut results = Vec::new();
     for adapter in all_skills_adapters() {
-        let result = dry_run_skills_adapter(&*adapter, skills_dir);
+        let result = dry_run_skills_adapter(adapter.as_ref(), skills_dir);
         results.push(result);
     }
     results
@@ -761,7 +784,7 @@ pub fn dry_run_skills_tools(
     for name in tool_names {
         match find_skills_adapter(name) {
             Some(adapter) => {
-                let result = dry_run_skills_adapter(&*adapter, skills_dir);
+                let result = dry_run_skills_adapter(adapter, skills_dir);
                 results.push(result);
             }
             None => {

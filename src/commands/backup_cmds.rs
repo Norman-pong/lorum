@@ -1,5 +1,7 @@
 //! Backup command handlers.
 
+use std::collections::HashSet;
+
 use crate::error::LorumError;
 
 /// Run the `backup list` subcommand: lists all backup files with details.
@@ -11,16 +13,14 @@ pub fn run_backup_list(_config_path: Option<&str>) -> Result<(), LorumError> {
     }
 
     // Collect unique tool names first, then list backups per tool once.
-    let mut tool_names: Vec<String> = Vec::new();
+    let mut tool_names: HashSet<String> = HashSet::new();
     for item in std::fs::read_dir(&dir)?.filter_map(|e| e.ok()) {
         let name = match item.path().file_name().and_then(|n| n.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
         };
         if let Some((tool, _)) = name.split_once('-') {
-            if !tool_names.contains(&tool.to_string()) {
-                tool_names.push(tool.to_string());
-            }
+            tool_names.insert(tool.to_string());
         }
     }
 
@@ -81,7 +81,7 @@ pub fn run_backup_create(
 ) -> Result<(), LorumError> {
     let tool_names: Vec<String> = if all || tools.is_empty() {
         crate::adapters::all_adapters()
-            .into_iter()
+            .iter()
             .map(|a| a.name().to_string())
             .collect()
     } else {
@@ -142,6 +142,19 @@ pub fn run_backup_restore(
         };
         if !backup_path.exists() {
             return Err(LorumError::ConfigNotFound { path: backup_path });
+        }
+        // Validate that the backup path is within the backup directory.
+        let canonical_backup =
+            std::fs::canonicalize(&backup_path).map_err(|e| LorumError::Io { source: e })?;
+        let canonical_backup_dir = std::fs::canonicalize(crate::backup::backup_dir()?)
+            .map_err(|e| LorumError::Io { source: e })?;
+        if !canonical_backup.starts_with(&canonical_backup_dir) {
+            return Err(LorumError::Other {
+                message: format!(
+                    "backup path '{}' is outside the backup directory",
+                    backup_path.display()
+                ),
+            });
         }
         crate::backup::restore_backup_from_path(&backup_path, &paths[0])?;
         println!("restored {tool} from {}", backup_path.display());

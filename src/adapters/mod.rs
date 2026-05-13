@@ -8,6 +8,7 @@
 //! writing rules files across tools that support them.
 
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use crate::config::{HooksConfig, McpConfig};
 use crate::error::LorumError;
@@ -28,7 +29,7 @@ pub mod windsurf;
 /// Implementors define how to interact with a specific AI coding tool's
 /// configuration file, including its format (JSON/TOML), location, and
 /// the field name used for MCP servers.
-pub trait ToolAdapter {
+pub trait ToolAdapter: Send + Sync {
     /// Human-readable name of the tool (e.g. "claude-code").
     fn name(&self) -> &str;
 
@@ -49,27 +50,34 @@ pub trait ToolAdapter {
     fn write_mcp(&self, config: &McpConfig) -> Result<(), LorumError>;
 }
 
-/// Return all registered adapters.
-pub fn all_adapters() -> Vec<Box<dyn ToolAdapter>> {
+static ALL_ADAPTERS: LazyLock<Vec<Box<dyn ToolAdapter>>> = LazyLock::new(|| {
     vec![
         Box::new(claude::ClaudeAdapter),
         Box::new(codex::CodexAdapter),
         Box::new(proma::PromaAdapter),
         Box::new(kimi::KimiAdapter),
-        Box::new(trae::TraeAdapter),
+        Box::new(trae::TraeAdapter::new()),
     ]
+});
+
+/// Return all registered adapters.
+pub fn all_adapters() -> &'static [Box<dyn ToolAdapter>] {
+    &ALL_ADAPTERS
 }
 
 /// Find an adapter by name.
-pub fn find_adapter(name: &str) -> Option<Box<dyn ToolAdapter>> {
-    all_adapters().into_iter().find(|a| a.name() == name)
+pub fn find_adapter(name: &str) -> Option<&'static dyn ToolAdapter> {
+    ALL_ADAPTERS
+        .iter()
+        .find(|a| a.name() == name)
+        .map(|a| a.as_ref())
 }
 
 /// Per-tool adapter for reading/writing rules files.
 ///
 /// Implementors define how to interact with a specific AI coding tool's
 /// rules file, including its location on disk.
-pub trait RulesAdapter {
+pub trait RulesAdapter: Send + Sync {
     /// Human-readable name of the tool.
     fn name(&self) -> &str;
 
@@ -87,18 +95,25 @@ pub trait RulesAdapter {
     fn write_rules(&self, project_root: &Path, content: &str) -> Result<(), LorumError>;
 }
 
-/// Return all registered rules adapters.
-pub fn all_rules_adapters() -> Vec<Box<dyn RulesAdapter>> {
+static ALL_RULES_ADAPTERS: LazyLock<Vec<Box<dyn RulesAdapter>>> = LazyLock::new(|| {
     vec![
         Box::new(cursor::CursorRulesAdapter),
         Box::new(windsurf::WindsurfRulesAdapter),
         Box::new(codex::CodexRulesAdapter),
     ]
+});
+
+/// Return all registered rules adapters.
+pub fn all_rules_adapters() -> &'static [Box<dyn RulesAdapter>] {
+    &ALL_RULES_ADAPTERS
 }
 
 /// Find a rules adapter by name.
-pub fn find_rules_adapter(name: &str) -> Option<Box<dyn RulesAdapter>> {
-    all_rules_adapters().into_iter().find(|a| a.name() == name)
+pub fn find_rules_adapter(name: &str) -> Option<&'static dyn RulesAdapter> {
+    ALL_RULES_ADAPTERS
+        .iter()
+        .find(|a| a.name() == name)
+        .map(|a| a.as_ref())
 }
 
 /// Read a rules file at `path`, returning `None` if it does not exist.
@@ -130,7 +145,7 @@ pub(crate) fn write_rules_file(path: &Path, content: &str) -> Result<(), LorumEr
 /// Implementors define how to interact with a specific AI coding tool's
 /// hooks configuration, including its format (JSON/TOML), location, and
 /// the field structure used for hooks.
-pub trait HooksAdapter {
+pub trait HooksAdapter: Send + Sync {
     /// Human-readable name of the tool (e.g. "claude-code").
     fn name(&self) -> &str;
 
@@ -149,14 +164,20 @@ pub trait HooksAdapter {
     fn write_hooks(&self, config: &HooksConfig) -> Result<(), LorumError>;
 }
 
+static ALL_HOOKS_ADAPTERS: LazyLock<Vec<Box<dyn HooksAdapter>>> =
+    LazyLock::new(|| vec![Box::new(claude::ClaudeAdapter), Box::new(kimi::KimiAdapter)]);
+
 /// Return all registered hooks adapters.
-pub fn all_hooks_adapters() -> Vec<Box<dyn HooksAdapter>> {
-    vec![Box::new(claude::ClaudeAdapter), Box::new(kimi::KimiAdapter)]
+pub fn all_hooks_adapters() -> &'static [Box<dyn HooksAdapter>] {
+    &ALL_HOOKS_ADAPTERS
 }
 
 /// Find a hooks adapter by name.
-pub fn find_hooks_adapter(name: &str) -> Option<Box<dyn HooksAdapter>> {
-    all_hooks_adapters().into_iter().find(|a| a.name() == name)
+pub fn find_hooks_adapter(name: &str) -> Option<&'static dyn HooksAdapter> {
+    ALL_HOOKS_ADAPTERS
+        .iter()
+        .find(|a| a.name() == name)
+        .map(|a| a.as_ref())
 }
 
 /// Per-tool adapter for reading/writing skills directories.
@@ -164,7 +185,7 @@ pub fn find_hooks_adapter(name: &str) -> Option<Box<dyn HooksAdapter>> {
 /// Skills are directory-based entities (each skill is a folder containing
 /// SKILL.md and optional auxiliary files). Adapters define where each tool
 /// stores its skills.
-pub trait SkillsAdapter {
+pub trait SkillsAdapter: Send + Sync {
     /// Human-readable name of the tool (e.g. "claude-code").
     fn name(&self) -> &str;
 
@@ -181,17 +202,24 @@ pub trait SkillsAdapter {
     fn remove_skill(&self, name: &str) -> Result<(), LorumError>;
 }
 
-/// Return all registered skills adapters.
-pub fn all_skills_adapters() -> Vec<Box<dyn SkillsAdapter>> {
+static ALL_SKILLS_ADAPTERS: LazyLock<Vec<Box<dyn SkillsAdapter>>> = LazyLock::new(|| {
     vec![
         Box::new(claude::ClaudeSkillsAdapter),
         Box::new(proma::PromaSkillsAdapter),
     ]
+});
+
+/// Return all registered skills adapters.
+pub fn all_skills_adapters() -> &'static [Box<dyn SkillsAdapter>] {
+    &ALL_SKILLS_ADAPTERS
 }
 
 /// Find a skills adapter by name.
-pub fn find_skills_adapter(name: &str) -> Option<Box<dyn SkillsAdapter>> {
-    all_skills_adapters().into_iter().find(|a| a.name() == name)
+pub fn find_skills_adapter(name: &str) -> Option<&'static dyn SkillsAdapter> {
+    ALL_SKILLS_ADAPTERS
+        .iter()
+        .find(|a| a.name() == name)
+        .map(|a| a.as_ref())
 }
 
 /// Return the union of all tool names registered across all four adapter dimensions.
@@ -304,6 +332,15 @@ mod tests {
     #[test]
     fn find_adapter_returns_none_for_unknown() {
         assert!(find_adapter("nonexistent-tool").is_none());
+    }
+
+    #[test]
+    fn find_adapter_returns_static_ref() {
+        let a = find_adapter("claude-code");
+        let b = find_adapter("claude-code");
+        assert!(a.is_some());
+        // Both should point to the same cached instance.
+        assert_eq!(a.unwrap().name(), b.unwrap().name());
     }
 
     #[test]

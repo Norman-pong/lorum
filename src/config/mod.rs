@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 
 use crate::error::LorumError;
 
+use serde::de::DeserializeOwned;
+
 /// Output format for configuration display.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub enum OutputFormat {
@@ -92,13 +94,16 @@ pub struct ProjectConfig {
     pub exclude: Vec<String>,
 }
 
-/// Returns the global configuration file path: `~/.config/lorum/config.yaml`
-/// (XDG Base Directory Specification).
+/// Resolves the normalized XDG configuration directory.
 ///
-/// Uses `$XDG_CONFIG_HOME/lorum` if that environment variable is set.
-/// Otherwise falls back to `$HOME/.config/lorum` on all platforms
-/// (including macOS), overriding the macOS-native `dirs::config_dir()` path.
-pub fn global_config_path() -> Result<PathBuf, LorumError> {
+/// Uses `$XDG_CONFIG_HOME` if set, otherwise falls back to
+/// `$HOME/.config` on all platforms.
+///
+/// The returned path is normalized (`.` and `..` components are resolved)
+/// and verified to be absolute.  This prevents malicious paths containing
+/// `..` from escaping the intended directory without requiring the path
+/// to already exist on disk.
+pub fn resolve_config_dir() -> Result<PathBuf, LorumError> {
     let config_dir = if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
         PathBuf::from(xdg)
     } else {
@@ -107,7 +112,52 @@ pub fn global_config_path() -> Result<PathBuf, LorumError> {
         })?;
         home.join(".config")
     };
-    Ok(config_dir.join("lorum").join("config.yaml"))
+
+    if !config_dir.is_absolute() {
+        return Err(LorumError::Other {
+            message: "config directory path must be absolute".into(),
+        });
+    }
+
+    // Normalize `.` and `..` components manually so the path is
+    // trustworthy even when the directory does not exist yet.
+    let mut normalized = PathBuf::new();
+    for component in config_dir.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+
+    Ok(normalized)
+}
+
+/// Returns the global configuration file path: `~/.config/lorum/config.yaml`
+/// (XDG Base Directory Specification).
+///
+/// Uses `$XDG_CONFIG_HOME/lorum` if that environment variable is set.
+/// Otherwise falls back to `$HOME/.config/lorum` on all platforms
+/// (including macOS), overriding the macOS-native `dirs::config_dir()` path.
+pub fn global_config_path() -> Result<PathBuf, LorumError> {
+    Ok(resolve_config_dir()?.join("lorum").join("config.yaml"))
+}
+
+/// Load and deserialize a YAML file at `path`.
+///
+/// # Errors
+///
+/// - [`LorumError::ConfigParse`] if the file cannot be parsed as YAML.
+/// - [`LorumError::Io`] for other I/O failures.
+fn load_yaml<T: DeserializeOwned>(path: &Path) -> Result<T, LorumError> {
+    let contents = std::fs::read_to_string(path)?;
+    serde_yaml::from_str(&contents).map_err(|e| LorumError::ConfigParse {
+        format: "yaml".into(),
+        path: path.to_path_buf(),
+        source: Box::new(e),
+    })
 }
 
 /// Reads a [`LorumConfig`] from the file at `path`.
@@ -125,12 +175,7 @@ pub fn load_config(path: &Path) -> Result<LorumConfig, LorumError> {
             path: path.to_path_buf(),
         });
     }
-    let contents = std::fs::read_to_string(path)?;
-    serde_yaml::from_str(&contents).map_err(|e| LorumError::ConfigParse {
-        format: "yaml".into(),
-        path: path.to_path_buf(),
-        source: Box::new(e),
-    })
+    load_yaml(path)
 }
 
 /// Writes a [`LorumConfig`] to the file at `path`.
@@ -182,21 +227,13 @@ pub fn find_project_config(start_dir: &Path) -> Option<PathBuf> {
 ///
 /// # Errors
 ///
-/// - [`LorumError::ConfigNotFound`] if the file does not exist.
 /// - [`LorumError::ConfigParse`] if the file cannot be parsed as YAML.
 /// - [`LorumError::Io`] for other I/O failures.
-pub fn load_project_config(path: &Path) -> Result<ProjectConfig, LorumError> {
+pub fn load_project_config(path: &Path) -> Result<Option<ProjectConfig>, LorumError> {
     if !path.exists() {
-        return Err(LorumError::ConfigNotFound {
-            path: path.to_path_buf(),
-        });
+        return Ok(None);
     }
-    let contents = std::fs::read_to_string(path)?;
-    serde_yaml::from_str(&contents).map_err(|e| LorumError::ConfigParse {
-        format: "yaml".into(),
-        path: path.to_path_buf(),
-        source: Box::new(e),
-    })
+    load_yaml(path).map(Some)
 }
 
 /// Merges global and project-level configurations.
@@ -266,7 +303,8 @@ pub fn resolve_effective_config(
     let project_config = project
         .as_ref()
         .map(|p| load_project_config(p))
-        .transpose()?;
+        .transpose()?
+        .flatten();
 
     Ok(merge_configs(&global, project_config.as_ref()))
 }

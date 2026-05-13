@@ -136,72 +136,9 @@ pub fn run_import(from: &str, dry_run: bool, config_path: Option<&str>) -> Resul
             errors: Vec::new(),
         };
 
-        // MCP dimension
-        if let Some(adapter) = crate::adapters::find_adapter(tool_name) {
-            match adapter.read_mcp() {
-                Ok(mcp) => {
-                    summary.mcp_servers = mcp.servers.len();
-                    if !dry_run {
-                        for (name, server) in &mcp.servers {
-                            lorum_config
-                                .mcp
-                                .servers
-                                .insert(name.clone(), server.clone());
-                        }
-                    }
-                }
-                Err(e) => summary.errors.push(format!("mcp: {e}")),
-            }
-        }
-
-        // Hooks dimension
-        if let Some(adapter) = crate::adapters::find_hooks_adapter(tool_name) {
-            match adapter.read_hooks() {
-                Ok(hooks) => {
-                    summary.hook_handlers = hooks.events.values().map(|v| v.len()).sum();
-                    if !dry_run {
-                        for (event, handlers) in &hooks.events {
-                            lorum_config
-                                .hooks
-                                .events
-                                .insert(event.clone(), handlers.clone());
-                        }
-                    }
-                }
-                Err(e) => summary.errors.push(format!("hooks: {e}")),
-            }
-        }
-
-        // Rules dimension
-        if let Some(adapter) = crate::adapters::find_rules_adapter(tool_name) {
-            let cwd = std::env::current_dir().map_err(|e| LorumError::Io { source: e })?;
-            match adapter.read_rules(&cwd) {
-                Ok(Some(content)) => {
-                    let imported = crate::rules::parse_rules(&content);
-                    summary.rules_sections = imported.sections.len();
-                    if !dry_run {
-                        let mut existing = match crate::rules::load_rules(&cwd) {
-                            Ok(rules) => rules,
-                            Err(LorumError::ConfigNotFound { .. }) => crate::rules::RulesFile {
-                                preamble: crate::rules::DEFAULT_PREAMBLE.to_string(),
-                                sections: Vec::new(),
-                            },
-                            Err(e) => return Err(e),
-                        };
-                        let existing_names: std::collections::HashSet<String> =
-                            existing.sections.iter().map(|s| s.name.clone()).collect();
-                        for section in imported.sections {
-                            if !existing_names.contains(&section.name) {
-                                existing.sections.push(section);
-                            }
-                        }
-                        crate::rules::save_rules(&cwd, &existing)?;
-                    }
-                }
-                Ok(None) => {}
-                Err(e) => summary.errors.push(format!("rules: {e}")),
-            }
-        }
+        import_mcp(tool_name, dry_run, &mut summary, &mut lorum_config);
+        import_hooks(tool_name, dry_run, &mut summary, &mut lorum_config);
+        import_rules(tool_name, dry_run, &mut summary)?;
 
         if summary.mcp_servers > 0
             || summary.hook_handlers > 0
@@ -219,6 +156,99 @@ pub fn run_import(from: &str, dry_run: bool, config_path: Option<&str>) -> Resul
         print_import_results(&summaries);
     }
 
+    Ok(())
+}
+
+/// Import MCP servers from a single tool into the lorum config.
+fn import_mcp(
+    tool_name: &str,
+    dry_run: bool,
+    summary: &mut ImportSummary,
+    lorum_config: &mut config::LorumConfig,
+) {
+    if let Some(adapter) = crate::adapters::find_adapter(tool_name) {
+        match adapter.read_mcp() {
+            Ok(mcp) => {
+                summary.mcp_servers = mcp.servers.len();
+                if !dry_run {
+                    for (name, server) in &mcp.servers {
+                        lorum_config
+                            .mcp
+                            .servers
+                            .insert(name.clone(), server.clone());
+                    }
+                }
+            }
+            Err(e) => summary.errors.push(format!("mcp: {e}")),
+        }
+    }
+}
+
+/// Import hooks from a single tool into the lorum config.
+fn import_hooks(
+    tool_name: &str,
+    dry_run: bool,
+    summary: &mut ImportSummary,
+    lorum_config: &mut config::LorumConfig,
+) {
+    if let Some(adapter) = crate::adapters::find_hooks_adapter(tool_name) {
+        match adapter.read_hooks() {
+            Ok(hooks) => {
+                summary.hook_handlers = hooks.events.values().map(|v| v.len()).sum();
+                if !dry_run {
+                    for (event, handlers) in &hooks.events {
+                        lorum_config
+                            .hooks
+                            .events
+                            .insert(event.clone(), handlers.clone());
+                    }
+                }
+            }
+            Err(e) => summary.errors.push(format!("hooks: {e}")),
+        }
+    }
+}
+
+/// Import rules from a single tool into the project's RULES.md.
+fn import_rules(
+    tool_name: &str,
+    dry_run: bool,
+    summary: &mut ImportSummary,
+) -> Result<(), LorumError> {
+    if let Some(adapter) = crate::adapters::find_rules_adapter(tool_name) {
+        let project_root = crate::rules::find_project_root(
+            &std::env::current_dir().map_err(|e| LorumError::Io { source: e })?,
+        )
+        .unwrap_or_else(|| {
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+        });
+        match adapter.read_rules(&project_root) {
+            Ok(Some(content)) => {
+                let imported = crate::rules::parse_rules(&content);
+                summary.rules_sections = imported.sections.len();
+                if !dry_run {
+                    let mut existing = match crate::rules::load_rules(&project_root) {
+                        Ok(rules) => rules,
+                        Err(LorumError::ConfigNotFound { .. }) => crate::rules::RulesFile {
+                            preamble: crate::rules::DEFAULT_PREAMBLE.to_string(),
+                            sections: Vec::new(),
+                        },
+                        Err(e) => return Err(e),
+                    };
+                    let existing_names: std::collections::HashSet<String> =
+                        existing.sections.iter().map(|s| s.name.clone()).collect();
+                    for section in imported.sections {
+                        if !existing_names.contains(&section.name) {
+                            existing.sections.push(section);
+                        }
+                    }
+                    crate::rules::save_rules(&project_root, &existing)?;
+                }
+            }
+            Ok(None) => {}
+            Err(e) => summary.errors.push(format!("rules: {e}")),
+        }
+    }
     Ok(())
 }
 
@@ -328,8 +358,33 @@ pub fn run_check(config_path: Option<&str>) -> Result<(), LorumError> {
         config::resolve_effective_config_from_cwd(config_path.map(PathBuf::from).as_deref())?;
 
     let mut issues = Vec::new();
+    check_mcp_servers(&config, &mut issues);
+    check_hooks(&config, &mut issues);
+    check_skills(&mut issues);
 
-    // ── MCP server checks ───────────────────────────────────────────
+    // ── Summary ─────────────────────────────────────────────────────
+    if issues.is_empty() {
+        let hook_events = config.hooks.events.len();
+        let hook_handlers: usize = config.hooks.events.values().map(|v| v.len()).sum();
+        println!(
+            "config is valid ({} servers, {} hook events, {} handlers)",
+            config.mcp.servers.len(),
+            hook_events,
+            hook_handlers,
+        );
+    } else {
+        for issue in &issues {
+            eprintln!("issue: {issue}");
+        }
+        return Err(LorumError::Other {
+            message: format!("{} issue(s) found", issues.len()),
+        });
+    }
+    Ok(())
+}
+
+/// Check MCP servers for command availability and unset env references.
+fn check_mcp_servers(config: &config::LorumConfig, issues: &mut Vec<String>) {
     for (name, server) in &config.mcp.servers {
         if server.command.is_empty() {
             issues.push(format!("server '{name}' has empty command"));
@@ -355,8 +410,10 @@ pub fn run_check(config_path: Option<&str>) -> Result<(), LorumError> {
             ));
         }
     }
+}
 
-    // ── Hooks checks ────────────────────────────────────────────────
+/// Check hooks for valid event names and non-empty handler fields.
+fn check_hooks(config: &config::LorumConfig, issues: &mut Vec<String>) {
     for (event, handlers) in &config.hooks.events {
         if event.is_empty() {
             issues.push("hooks: empty event name".into());
@@ -378,8 +435,10 @@ pub fn run_check(config_path: Option<&str>) -> Result<(), LorumError> {
             }
         }
     }
+}
 
-    // ── Skills directory checks ─────────────────────────────────────
+/// Check the unified skills directory structure.
+fn check_skills(issues: &mut Vec<String>) {
     match crate::skills::global_skills_dir() {
         Ok(dir) if dir.exists() => match crate::skills::scan_skills_dir(&dir) {
             Ok(entries) => {
@@ -401,26 +460,6 @@ pub fn run_check(config_path: Option<&str>) -> Result<(), LorumError> {
         },
         _ => {} // No global skills directory yet — that's fine.
     }
-
-    // ── Summary ─────────────────────────────────────────────────────
-    if issues.is_empty() {
-        let hook_events = config.hooks.events.len();
-        let hook_handlers: usize = config.hooks.events.values().map(|v| v.len()).sum();
-        println!(
-            "config is valid ({} servers, {} hook events, {} handlers)",
-            config.mcp.servers.len(),
-            hook_events,
-            hook_handlers,
-        );
-    } else {
-        for issue in &issues {
-            eprintln!("issue: {issue}");
-        }
-        return Err(LorumError::Other {
-            message: format!("{} issue(s) found", issues.len()),
-        });
-    }
-    Ok(())
 }
 
 /// Check whether a command exists on PATH or as an absolute/relative path.
@@ -603,7 +642,8 @@ pub fn run_config(
         let cwd = std::env::current_dir()?;
         match config::find_project_config(&cwd) {
             Some(p) => {
-                let proj = config::load_project_config(&p)?;
+                let proj = config::load_project_config(&p)?
+                    .ok_or_else(|| LorumError::ConfigNotFound { path: p.clone() })?;
                 (
                     config::LorumConfig {
                         mcp: proj.mcp,

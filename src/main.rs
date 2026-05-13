@@ -336,25 +336,30 @@ impl Cli {
         match self.command {
             None => {
                 let config_path = self.config.as_deref().map(std::path::Path::new);
-                let has_config = lorum::config::resolve_effective_config_from_cwd(config_path)
-                    .map(|cfg| {
-                        !cfg.mcp.servers.is_empty()
-                            || !cfg.hooks.events.is_empty()
-                            || lorum::config::find_project_config(
-                                &std::env::current_dir().unwrap_or_default(),
+                let has_config = match lorum::config::resolve_effective_config_from_cwd(config_path)
+                {
+                    Ok(cfg) => {
+                        !cfg.mcp.servers.is_empty() || !cfg.hooks.events.is_empty() || {
+                            let cwd = std::env::current_dir()
+                                .map_err(|e| lorum::error::LorumError::Io { source: e })?;
+                            Ok::<_, lorum::error::LorumError>(
+                                lorum::config::find_project_config(&cwd).is_some(),
                             )
-                            .is_some()
-                    })
-                    .unwrap_or(false);
+                        }?
+                    }
+                    Err(_) => false,
+                };
                 if !has_config && !self.no_welcome {
                     println!("Welcome to lorum! You haven't created a configuration file yet.\n");
                     println!("Quick start:");
                     println!("  lorum init              Create initial config");
                     println!("  lorum init --local      Create project-level config");
                     println!("  lorum import --from all Import from existing tools");
-                    std::process::exit(0);
+                    return Ok(());
                 }
-                std::process::exit(1);
+                Err(lorum::error::LorumError::Other {
+                    message: "no configuration found".into(),
+                })
             }
             Some(Commands::Init { local, yes }) => {
                 commands::run_init(self.config.as_deref(), local, yes)

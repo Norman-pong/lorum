@@ -23,7 +23,17 @@ pub fn interpolate_env(value: &str, expand: bool) -> String {
 }
 
 /// Replace all `${VAR}` occurrences with the corresponding env value.
+///
+/// Recursively expands nested variable references up to `max_depth` to
+/// prevent infinite loops when circular references exist.
 pub(crate) fn expand_env_vars(input: &str) -> String {
+    expand_env_vars_with_depth(input, 0, 10)
+}
+
+fn expand_env_vars_with_depth(input: &str, depth: usize, max_depth: usize) -> String {
+    if depth >= max_depth {
+        return input.to_string();
+    }
     let mut result = String::with_capacity(input.len());
     let chars: Vec<char> = input.chars().collect();
     let mut i = 0;
@@ -44,7 +54,10 @@ pub(crate) fn expand_env_vars(input: &str) -> String {
             }
             if found_close {
                 match std::env::var(&var_name) {
-                    Ok(val) => result.push_str(&val),
+                    Ok(val) => {
+                        let expanded = expand_env_vars_with_depth(&val, depth + 1, max_depth);
+                        result.push_str(&expanded);
+                    }
                     Err(_) => result.push_str(&format!("${{{var_name}}}")),
                 }
             } else {
@@ -163,6 +176,29 @@ mod tests {
         assert_eq!(result, "1_2");
         unsafe { std::env::remove_var("LORUM_A") };
         unsafe { std::env::remove_var("LORUM_B") };
+    }
+
+    #[test]
+    #[serial]
+    fn interpolate_circular_reference_stops_at_max_depth() {
+        unsafe { std::env::set_var("LORUM_CIRC_A", "${LORUM_CIRC_B}") };
+        unsafe { std::env::set_var("LORUM_CIRC_B", "${LORUM_CIRC_A}") };
+        let result = interpolate_env("${LORUM_CIRC_A}", true);
+        // After 10 levels of recursion the original placeholder is returned.
+        assert_eq!(result, "${LORUM_CIRC_A}");
+        unsafe { std::env::remove_var("LORUM_CIRC_A") };
+        unsafe { std::env::remove_var("LORUM_CIRC_B") };
+    }
+
+    #[test]
+    #[serial]
+    fn interpolate_nested_var_expansion() {
+        unsafe { std::env::set_var("LORUM_OUTER", "hello ${LORUM_INNER}") };
+        unsafe { std::env::set_var("LORUM_INNER", "world") };
+        let result = interpolate_env("${LORUM_OUTER}", true);
+        assert_eq!(result, "hello world");
+        unsafe { std::env::remove_var("LORUM_OUTER") };
+        unsafe { std::env::remove_var("LORUM_INNER") };
     }
 
     #[test]
