@@ -8,7 +8,7 @@
 //! # Rules sync
 //!
 //! The engine also supports syncing rules content to all registered
-//! [`RulesAdapter`](crate::adapters::RulesAdapter) instances via
+//! [`RulesAdapter`] instances via
 //! [`sync_rules_all`] and [`sync_rules_tools`]. The dry-run counterparts
 //! [`dry_run_rules_all`] and [`dry_run_rules_tools`] preview which tools
 //! need an update without writing anything.

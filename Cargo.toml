@@ -1,9 +1,16 @@
 [package]
 name = "lorum"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 edition = "2024"
 rust-version = "1.85.0"
 description = "Unified MCP configuration manager for AI coding tools"
+license = "MIT"
+repository = "https://github.com/Norman-pong/lorum"
+homepage = "https://github.com/Norman-pong/lorum"
+documentation = "https://docs.rs/lorum"
+keywords = ["mcp", "cli", "ai", "configuration", "tools"]
+categories = ["command-line-utilities", "config"]
+authors = ["Norman-pong"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
