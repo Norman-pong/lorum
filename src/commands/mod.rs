@@ -81,6 +81,12 @@ fn detect_installed_tools() -> Vec<String> {
         if home.join(".kimi").exists() {
             tools.push("kimi".into());
         }
+        if home.join(".codeium").exists() {
+            tools.push("windsurf".into());
+        }
+        if home.join(".config").join("opencode").exists() {
+            tools.push("opencode".into());
+        }
     }
     if std::env::current_dir()
         .map(|d| d.join(".trae").exists())
@@ -88,6 +94,20 @@ fn detect_installed_tools() -> Vec<String> {
     {
         tools.push("trae".into());
     }
+    if std::env::current_dir()
+        .map(|d| d.join(".cursor").exists())
+        .unwrap_or(false)
+    {
+        tools.push("cursor".into());
+    }
+    if command_exists("windsurf") {
+        tools.push("windsurf".into());
+    }
+    if command_exists("opencode") {
+        tools.push("opencode".into());
+    }
+    tools.sort();
+    tools.dedup();
     tools
 }
 /// Summary of importing from a single tool across all supported dimensions.

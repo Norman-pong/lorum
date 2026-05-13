@@ -135,14 +135,17 @@ DATA_DIR = "/tmp/memory"
 #[test]
 fn all_adapters_registered() {
     let adapters = all_adapters();
-    assert_eq!(adapters.len(), 5);
+    assert_eq!(adapters.len(), 8);
 
     let names: Vec<&str> = adapters.iter().map(|a| a.name()).collect();
     assert!(names.contains(&"claude-code"));
     assert!(names.contains(&"codex"));
+    assert!(names.contains(&"cursor"));
     assert!(names.contains(&"proma"));
     assert!(names.contains(&"kimi"));
+    assert!(names.contains(&"opencode"));
     assert!(names.contains(&"trae"));
+    assert!(names.contains(&"windsurf"));
 }
 
 // ---------------------------------------------------------------------------
@@ -153,9 +156,12 @@ fn all_adapters_registered() {
 fn find_adapter_by_name() {
     assert!(find_adapter("claude-code").is_some());
     assert!(find_adapter("codex").is_some());
+    assert!(find_adapter("cursor").is_some());
     assert!(find_adapter("proma").is_some());
     assert!(find_adapter("kimi").is_some());
+    assert!(find_adapter("opencode").is_some());
     assert!(find_adapter("trae").is_some());
+    assert!(find_adapter("windsurf").is_some());
     assert!(find_adapter("nonexistent").is_none());
 }
 

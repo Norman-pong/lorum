@@ -86,15 +86,18 @@ fn sync_produces_results_for_all_adapters() {
     };
 
     let results = sync::sync_all(&mcp);
-    // We have 5 registered adapters.
-    assert_eq!(results.len(), 5);
+    // We have 8 registered adapters.
+    assert_eq!(results.len(), 8);
 
     let names: Vec<&str> = results.iter().map(|r| r.tool.as_str()).collect();
     assert!(names.contains(&"claude-code"));
     assert!(names.contains(&"codex"));
+    assert!(names.contains(&"cursor"));
     assert!(names.contains(&"proma"));
     assert!(names.contains(&"kimi"));
+    assert!(names.contains(&"opencode"));
     assert!(names.contains(&"trae"));
+    assert!(names.contains(&"windsurf"));
 
     for result in &results {
         // Each result should report the correct number of servers synced on

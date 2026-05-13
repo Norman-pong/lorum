@@ -289,9 +289,11 @@ fn sync_rules_creates_backup_when_file_exists() {
         "expected at least one backup for cursor"
     );
 
-    // The backup should contain the old content.
-    let backup_content = std::fs::read_to_string(&backups[0].path).unwrap();
-    assert_eq!(backup_content, old_content);
+    // At least one backup should contain the old content.
+    let found = backups
+        .iter()
+        .any(|b| std::fs::read_to_string(&b.path).unwrap() == old_content);
+    assert!(found, "expected a backup with the old content");
 }
 
 // ---------------------------------------------------------------------------
