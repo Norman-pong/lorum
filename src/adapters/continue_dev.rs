@@ -829,4 +829,170 @@ mcpServers:
         assert_eq!(parsed.servers.len(), 1);
         assert!(parsed.servers.contains_key("s"));
     }
+
+    #[test]
+    fn read_mcp_from_yaml_errors_on_invalid_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        fs::write(&path, "mcpServers: [unclosed").unwrap();
+
+        let result = read_mcp_from_yaml(&path);
+        assert!(matches!(result, Err(LorumError::ConfigParse { .. })));
+    }
+
+    #[test]
+    fn write_yaml_errors_when_root_not_mapping() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        fs::write(&path, "[1, 2, 3]\n").unwrap();
+
+        let config = McpConfig {
+            servers: {
+                let mut m = BTreeMap::new();
+                m.insert("s".into(), make_server("c", &[], &[]));
+                m
+            },
+        };
+        let result = write_mcp_to_yaml(&path, &config);
+        assert!(matches!(result, Err(LorumError::Other { .. })));
+        if let Err(LorumError::Other { message }) = result {
+            assert!(message.contains("expected mapping at root"));
+        }
+    }
+
+    #[test]
+    fn write_yaml_errors_when_dir_creation_fails() {
+        // Use /dev/null as a parent to trigger directory creation failure
+        let path = PathBuf::from("/dev/null/config.yaml");
+        let config = McpConfig {
+            servers: {
+                let mut m = BTreeMap::new();
+                m.insert("s".into(), make_server("c", &[], &[]));
+                m
+            },
+        };
+        let result = write_mcp_to_yaml(&path, &config);
+        assert!(matches!(result, Err(LorumError::ConfigWrite { .. })));
+    }
+
+    #[test]
+    #[allow(clippy::permissions_set_readonly_false)]
+    fn write_yaml_errors_when_file_not_writable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        fs::write(&path, "existing: true\n").unwrap();
+
+        // Make file read-only
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(&path, perms).unwrap();
+
+        let config = McpConfig {
+            servers: {
+                let mut m = BTreeMap::new();
+                m.insert("s".into(), make_server("c", &[], &[]));
+                m
+            },
+        };
+        let result = write_mcp_to_yaml(&path, &config);
+
+        // Restore permissions so tempdir can clean up
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_readonly(false);
+        let _ = fs::set_permissions(&path, perms);
+
+        assert!(matches!(result, Err(LorumError::ConfigWrite { .. })));
+    }
+
+    #[test]
+    fn write_json_errors_when_root_not_object() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        fs::write(&path, "[1, 2, 3]").unwrap();
+
+        let config = McpConfig {
+            servers: {
+                let mut m = BTreeMap::new();
+                m.insert("s".into(), make_server("c", &[], &[]));
+                m
+            },
+        };
+        let result = write_mcp_to_json(&path, &config);
+        assert!(matches!(result, Err(LorumError::Other { .. })));
+        if let Err(LorumError::Other { message }) = result {
+            assert!(message.contains("expected object at root"));
+        }
+    }
+
+    #[test]
+    fn write_json_errors_when_experimental_not_object() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        fs::write(&path, r#"{"experimental": 42}"#).unwrap();
+
+        let config = McpConfig {
+            servers: {
+                let mut m = BTreeMap::new();
+                m.insert("s".into(), make_server("c", &[], &[]));
+                m
+            },
+        };
+        let result = write_mcp_to_json(&path, &config);
+        assert!(matches!(result, Err(LorumError::Other { .. })));
+        if let Err(LorumError::Other { message }) = result {
+            assert!(message.contains("expected object for 'experimental'"));
+        }
+    }
+
+    #[test]
+    fn detect_format_fallback_when_no_project_root_and_no_files() {
+        // Create adapter with no project_root, simulating a scenario where
+        // current dir has no .continue config. The fallback should return
+        // a project-level YAML path relative to cwd.
+        let adapter = ContinueDevAdapter::new();
+        let (path, format) = adapter.detect_format();
+        // When no files exist, it falls back to project_yaml_path which uses cwd
+        assert!(path.to_string_lossy().ends_with(".continue/config.yaml"));
+        assert_eq!(format, ConfigFormat::Yaml);
+    }
+
+    #[test]
+    fn write_yaml_errors_on_invalid_existing_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        fs::write(&path, "{{invalid").unwrap();
+
+        let config = McpConfig {
+            servers: {
+                let mut m = BTreeMap::new();
+                m.insert("s".into(), make_server("c", &[], &[]));
+                m
+            },
+        };
+        let result = write_mcp_to_yaml(&path, &config);
+        assert!(matches!(result, Err(LorumError::ConfigParse { .. })));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn detect_format_fallback_when_current_dir_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let subdir = dir.path().join("subdir");
+        fs::create_dir(&subdir).unwrap();
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&subdir).unwrap();
+
+        // Remove the directory while it is the current working directory.
+        // On Unix this succeeds and subsequent getcwd() calls fail.
+        fs::remove_dir(&subdir).unwrap();
+
+        let adapter = ContinueDevAdapter::new();
+        let (path, format) = adapter.detect_format();
+        assert_eq!(path, PathBuf::from(".continue/config.yaml"));
+        assert_eq!(format, ConfigFormat::Yaml);
+
+        // Restore cwd so the test runner doesn't break.
+        let _ = std::env::set_current_dir(&original_dir);
+    }
 }
