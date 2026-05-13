@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::config::{McpConfig, McpServer};
+use crate::config::{HooksConfig, McpConfig, McpServer};
 
 /// Interpolate `${VAR}` patterns in a string.
 ///
@@ -105,10 +105,7 @@ pub fn interpolate_mcp_config(config: &McpConfig, expand: bool) -> McpConfig {
 ///
 /// Returns a new [`HooksConfig`] with every string field processed through
 /// [`interpolate_env`].
-pub fn interpolate_hooks_config(
-    config: &crate::config::HooksConfig,
-    expand: bool,
-) -> crate::config::HooksConfig {
+pub fn interpolate_hooks_config(config: &HooksConfig, expand: bool) -> HooksConfig {
     let mut events = BTreeMap::new();
     for (event, handlers) in &config.events {
         let interpolated: Vec<crate::config::HookHandler> = handlers
@@ -122,7 +119,7 @@ pub fn interpolate_hooks_config(
             .collect();
         events.insert(event.clone(), interpolated);
     }
-    crate::config::HooksConfig { events }
+    HooksConfig { events }
 }
 
 #[cfg(test)]

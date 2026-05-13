@@ -295,9 +295,10 @@ fn merges_hooks_global_and_project() {
 fn global_config_path_returns_expected_suffix() {
     let path = global_config_path().unwrap();
     let s = path.to_string_lossy();
+    // Verify the path ends with /lorum/config.yaml regardless of platform.
     assert!(
-        s.ends_with(".config/lorum/config.yaml"),
-        "expected path ending in '.config/lorum/config.yaml', got: {}",
+        s.ends_with("/lorum/config.yaml"),
+        "expected path ending in '/lorum/config.yaml', got: {}",
         s
     );
 }
