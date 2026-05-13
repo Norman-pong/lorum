@@ -84,7 +84,11 @@ impl SkillsAdapter for ClaudeSkillsAdapter {
         })?;
         let target = dir.join(name);
         if target.exists() {
-            std::fs::remove_dir_all(&target)?;
+            let old = dir.join(format!(".old-{name}"));
+            if old.exists() {
+                std::fs::remove_dir_all(&old)?;
+            }
+            std::fs::rename(&target, &old)?;
         }
         copy_dir_recursive(source_dir, &target)
     }

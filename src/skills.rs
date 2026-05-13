@@ -107,19 +107,7 @@ pub fn scan_skills_dir(dir: &Path) -> Result<Vec<SkillEntry>, LorumError> {
         });
     }
 
-    entries.sort_by(|a, b| {
-        let a_name = a
-            .dir_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
-        let b_name = b
-            .dir_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
-        a_name.cmp(b_name)
-    });
+    entries.sort_by(|a, b| a.manifest.name.cmp(&b.manifest.name));
     Ok(entries)
 }
 

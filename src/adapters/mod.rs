@@ -42,11 +42,21 @@ pub trait ToolAdapter: Send + Sync {
     ///
     /// Returns an empty [`McpConfig`] when the configuration file does not
     /// exist, rather than an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LorumError::Io`] or [`LorumError::ConfigParse`] if the
+    /// configuration file exists but cannot be read or parsed.
     fn read_mcp(&self) -> Result<McpConfig, LorumError>;
 
     /// Write MCP servers to the tool's configuration.
     ///
     /// Must preserve non-MCP fields in the existing config file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LorumError::Io`] or [`LorumError::ConfigWrite`] if the
+    /// configuration file cannot be written.
     fn write_mcp(&self, config: &McpConfig) -> Result<(), LorumError>;
 }
 
@@ -87,11 +97,20 @@ pub trait RulesAdapter: Send + Sync {
     /// Read existing rules content from the tool's file.
     ///
     /// Returns `None` if the file does not exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LorumError::Io`] if the file exists but cannot be read.
     fn read_rules(&self, project_root: &Path) -> Result<Option<String>, LorumError>;
 
     /// Write rules content to the tool's file.
     ///
     /// Creates parent directories if needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LorumError::Io`] or [`LorumError::ConfigWrite`] if the file
+    /// cannot be written.
     fn write_rules(&self, project_root: &Path, content: &str) -> Result<(), LorumError>;
 }
 
@@ -118,11 +137,11 @@ pub fn find_rules_adapter(name: &str) -> Option<&'static dyn RulesAdapter> {
 
 /// Read a rules file at `path`, returning `None` if it does not exist.
 pub(crate) fn read_rules_file(path: &Path) -> Result<Option<String>, LorumError> {
-    if !path.exists() {
-        return Ok(None);
+    match std::fs::read_to_string(path) {
+        Ok(content) => Ok(Some(content)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
     }
-    let content = std::fs::read_to_string(path)?;
-    Ok(Some(content))
 }
 
 /// Write rules content to `path`, creating parent directories if needed.
@@ -156,11 +175,21 @@ pub trait HooksAdapter: Send + Sync {
     ///
     /// Returns an empty [`HooksConfig`] when the configuration file does not
     /// exist or contains no hooks, rather than an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LorumError::Io`] or [`LorumError::ConfigParse`] if the
+    /// configuration file exists but cannot be read or parsed.
     fn read_hooks(&self) -> Result<HooksConfig, LorumError>;
 
     /// Write hooks to the tool's configuration.
     ///
     /// Must preserve non-hooks fields in the existing config file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LorumError::Io`] or [`LorumError::ConfigWrite`] if the
+    /// configuration file cannot be written.
     fn write_hooks(&self, config: &HooksConfig) -> Result<(), LorumError>;
 }
 
@@ -193,12 +222,28 @@ pub trait SkillsAdapter: Send + Sync {
     fn skills_base_dir(&self) -> Option<PathBuf>;
 
     /// Read all skills from the tool's skills directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LorumError::Io`] if the skills directory cannot be read.
     fn read_skills(&self) -> Result<Vec<SkillEntry>, LorumError>;
 
     /// Write a single skill (full directory copy) to the tool's skills dir.
+    ///
+    /// If a skill with the same name already exists, it is removed without
+    /// backup before the new content is copied.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LorumError::Io`] if the source directory cannot be read or
+    /// the destination cannot be written.
     fn write_skill(&self, name: &str, source_dir: &Path) -> Result<(), LorumError>;
 
     /// Remove a skill directory from the tool's skills dir.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LorumError::Io`] if the skill directory cannot be removed.
     fn remove_skill(&self, name: &str) -> Result<(), LorumError>;
 }
 
@@ -225,6 +270,10 @@ pub fn find_skills_adapter(name: &str) -> Option<&'static dyn SkillsAdapter> {
 /// Return the union of all tool names registered across all four adapter dimensions.
 ///
 /// Each tool name appears at most once in the returned vector.
+///
+/// **Note:** Names are currently returned in lexicographic order because a
+/// `BTreeSet` is used for deduplication. If insertion order is required,
+/// switch to `IndexSet` (requires the `indexmap` crate).
 pub fn all_adapter_tool_names() -> Vec<String> {
     let mut names = std::collections::BTreeSet::new();
     for a in all_adapters() {
@@ -252,17 +301,23 @@ pub fn all_adapter_tool_names() -> Vec<String> {
 /// assert_eq!(kebab_to_pascal("session-start"), "SessionStart");
 /// ```
 pub fn kebab_to_pascal(s: &str) -> String {
-    s.split('-')
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(first) => {
-                    first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
-                }
+    let mut result = String::with_capacity(s.len());
+    let mut upper_next = true;
+    for c in s.chars() {
+        if c == '-' {
+            upper_next = true;
+        } else if upper_next {
+            for uc in c.to_uppercase() {
+                result.push(uc);
             }
-        })
-        .collect()
+            upper_next = false;
+        } else {
+            for lc in c.to_lowercase() {
+                result.push(lc);
+            }
+        }
+    }
+    result
 }
 
 /// Convert a PascalCase string to kebab-case.
@@ -275,7 +330,7 @@ pub fn kebab_to_pascal(s: &str) -> String {
 /// assert_eq!(pascal_to_kebab("SessionStart"), "session-start");
 /// ```
 pub fn pascal_to_kebab(s: &str) -> String {
-    let mut result = String::new();
+    let mut result = String::with_capacity(s.len() * 2);
     for (i, c) in s.chars().enumerate() {
         if c.is_uppercase() && i > 0 {
             result.push('-');

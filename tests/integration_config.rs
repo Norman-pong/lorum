@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use lorum::config::{HookHandler, HooksConfig, LorumConfig, McpConfig, McpServer, OutputFormat};
+use serial_test::serial;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -105,6 +106,7 @@ fn config_resolve_env_interpolates_hooks() {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[serial]
 fn config_local_source_annotation() {
     let dir = tempfile::tempdir().unwrap();
     let lorum_dir = dir.path().join(".lorum");

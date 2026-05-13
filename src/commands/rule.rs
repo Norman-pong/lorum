@@ -12,7 +12,7 @@ use crate::sync::{self, RulesDryRunResult, RulesSyncResult};
 
 /// Resolve the project root directory.
 ///
-/// Uses [`rules::find_project_root`] starting from the current working
+/// Uses [`crate::rules::find_project_root`] starting from the current working
 /// directory. Falls back to the current working directory when no `.lorum/`
 /// directory is found.
 fn resolve_project_root() -> Result<std::path::PathBuf, LorumError> {

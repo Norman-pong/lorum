@@ -308,12 +308,14 @@ fn global_config_path_respects_xdg_config_home() {
     let original = std::env::var_os("XDG_CONFIG_HOME");
     let result = panic::catch_unwind(|| {
         let dir = TempDir::new().unwrap();
+        // SAFETY: set_var is safe here because the test is marked #[serial].
         unsafe {
             std::env::set_var("XDG_CONFIG_HOME", dir.path());
         }
         let path = global_config_path().unwrap();
         assert_eq!(path, dir.path().join("lorum").join("config.yaml"));
     });
+    // SAFETY: restore_var is safe here because the test is marked #[serial].
     unsafe {
         match original {
             Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
@@ -386,6 +388,7 @@ fn resolve_effective_config_from_cwd_with_no_project_config() {
 
     let original = std::env::var_os("XDG_CONFIG_HOME");
     let result = panic::catch_unwind(|| {
+        // SAFETY: set_var is safe here because the test is marked #[serial].
         unsafe {
             std::env::set_var("XDG_CONFIG_HOME", dir.path());
         }
@@ -397,6 +400,7 @@ fn resolve_effective_config_from_cwd_with_no_project_config() {
         assert_eq!(effective.mcp.servers.len(), 1);
         assert_eq!(effective.mcp.servers["global-srv"].command, "node");
     });
+    // SAFETY: restore_var is safe here because the test is marked #[serial].
     unsafe {
         match original {
             Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
@@ -429,6 +433,7 @@ fn resolve_effective_config_from_cwd_merges_project_config() {
 
     let original = std::env::var_os("XDG_CONFIG_HOME");
     let result = panic::catch_unwind(|| {
+        // SAFETY: set_var is safe here because the test is marked #[serial].
         unsafe {
             std::env::set_var("XDG_CONFIG_HOME", dir.path());
         }
@@ -439,6 +444,7 @@ fn resolve_effective_config_from_cwd_merges_project_config() {
         assert_eq!(effective.mcp.servers["global-srv"].command, "node");
         assert_eq!(effective.mcp.servers["project-srv"].command, "python");
     });
+    // SAFETY: restore_var is safe here because the test is marked #[serial].
     unsafe {
         match original {
             Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),

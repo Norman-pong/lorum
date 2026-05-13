@@ -61,6 +61,7 @@ fn init_creates_global_config() {
 }
 
 #[test]
+#[serial]
 fn init_creates_local_config() {
     let dir = TempDir::new().unwrap();
     let local_path = dir.path().join(".lorum").join("config.yaml");
@@ -320,6 +321,7 @@ fn config_outputs_yaml() {
 }
 
 #[test]
+#[serial]
 fn config_local_missing_returns_error() {
     let dir = TempDir::new().unwrap();
     let orig = std::env::current_dir().unwrap();

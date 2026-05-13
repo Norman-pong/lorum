@@ -66,7 +66,12 @@ pub fn run_mcp_list(config_path: Option<&str>) -> Result<(), LorumError> {
         println!("no MCP servers configured");
         return Ok(());
     }
-    let max_name = cfg.mcp.servers.keys().map(|n| n.len()).max().unwrap_or(0);
+    #[allow(clippy::manual_unwrap_or)]
+    let max_name = if let Some(max) = cfg.mcp.servers.keys().map(|n| n.len()).max() {
+        max
+    } else {
+        4
+    };
     println!("{:<width$}  COMMAND", "NAME", width = max_name);
     for (name, server) in &cfg.mcp.servers {
         let args_str = if server.args.is_empty() {
@@ -124,6 +129,7 @@ pub fn run_mcp_edit(
 /// Parses `KEY=VALUE` string pairs into a `BTreeMap`.
 ///
 /// Pairs that do not contain `=` or have an empty key are silently skipped.
+/// A pair like `KEY=` is parsed as `("KEY", "")` (empty value, not discarded).
 pub fn parse_env_pairs(pairs: &[String]) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
     for pair in pairs {

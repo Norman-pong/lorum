@@ -192,9 +192,9 @@ pub fn save_config(path: &Path, config: &LorumConfig) -> Result<(), LorumError> 
             source: e,
         })?;
     }
-    let yaml = serde_yaml::to_string(config).map_err(|e| LorumError::ConfigWrite {
+    let yaml = serde_yaml::to_string(config).map_err(|e| LorumError::ConfigSerialize {
         path: path.to_path_buf(),
-        source: std::io::Error::new(std::io::ErrorKind::InvalidData, e),
+        source: Box::new(e),
     })?;
     std::fs::write(path, yaml).map_err(|e| LorumError::ConfigWrite {
         path: path.to_path_buf(),

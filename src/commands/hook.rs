@@ -22,7 +22,7 @@ pub fn run_hook_add(
     handler_type: Option<&str>,
     config_path: Option<&str>,
 ) -> Result<(), LorumError> {
-    if event.chars().any(|c| c.is_uppercase()) {
+    if !super::is_valid_kebab_case(event) {
         return Err(LorumError::Other {
             message: format!("event names must be kebab-case (e.g. 'pre-tool-use'), got: {event}"),
         });

@@ -60,16 +60,26 @@ fn format_size(size: u64) -> String {
         return "0B".to_string();
     }
     const UNITS: &[&str] = &["B", "KB", "MB", "GB"];
-    let mut s = size as f64;
     let mut idx = 0;
-    while s >= 1024.0 && idx < UNITS.len() - 1 {
-        s /= 1024.0;
+    let mut s = size;
+    while s >= 1024 && idx < UNITS.len() - 1 {
+        s /= 1024;
         idx += 1;
     }
-    if s.fract() < 0.05 {
-        format!("{:.0}{}", s, UNITS[idx])
+    if idx == 0 {
+        format!("{}{}", s, UNITS[idx])
     } else {
-        format!("{:.1}{}", s, UNITS[idx])
+        let divisor = 1024u64.pow(idx as u32);
+        let whole = size / divisor;
+        let rem = size % divisor;
+        let tenths = (rem * 10 + divisor / 2) / divisor;
+        if tenths == 0 {
+            format!("{}{}", whole, UNITS[idx])
+        } else if tenths >= 10 {
+            format!("{}.{}{}", whole + 1, 0, UNITS[idx])
+        } else {
+            format!("{}.{}{}", whole, tenths, UNITS[idx])
+        }
     }
 }
 

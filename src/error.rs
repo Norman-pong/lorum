@@ -33,6 +33,16 @@ pub enum LorumError {
         source: std::io::Error,
     },
 
+    /// Configuration file could not be serialized.
+    #[error("failed to serialize config for {path}")]
+    ConfigSerialize {
+        /// Path to the configuration file that could not be serialized.
+        path: std::path::PathBuf,
+        /// The underlying serialization error.
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
     /// Requested adapter name is not recognised.
     #[error("adapter not found: {name}")]
     AdapterNotFound {

@@ -1,5 +1,6 @@
 //! Unit tests for the interactive `init` command.
 
+use serial_test::serial;
 use tempfile::TempDir;
 
 use crate::commands::init::run_interactive_init;
@@ -21,6 +22,7 @@ fn rejects_non_tty_without_yes() {
 }
 
 #[test]
+#[serial]
 fn creates_local_config_and_gitignore() {
     let dir = TempDir::new().unwrap();
     let orig = std::env::current_dir().unwrap();
@@ -56,6 +58,7 @@ fn creates_local_config_and_gitignore() {
 }
 
 #[test]
+#[serial]
 fn refuses_to_overwrite_existing() {
     let dir = TempDir::new().unwrap();
 
@@ -76,6 +79,7 @@ fn refuses_to_overwrite_existing() {
 }
 
 #[test]
+#[serial]
 fn yes_mode_creates_without_prompts() {
     let dir = TempDir::new().unwrap();
     let orig_home = std::env::var_os("HOME");

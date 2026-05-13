@@ -22,11 +22,150 @@
 use std::path::Path;
 
 use crate::adapters::{
-    HooksAdapter, SkillsAdapter, ToolAdapter, all_adapters, all_hooks_adapters, all_rules_adapters,
-    all_skills_adapters, find_adapter, find_hooks_adapter, find_rules_adapter, find_skills_adapter,
+    HooksAdapter, RulesAdapter, SkillsAdapter, ToolAdapter, all_adapters, all_hooks_adapters,
+    all_rules_adapters, all_skills_adapters, find_adapter, find_hooks_adapter, find_rules_adapter,
+    find_skills_adapter,
 };
 use crate::config::{HooksConfig, McpConfig};
 use crate::error::LorumError;
+
+/// Common interface for accessing the tool name from any adapter trait object.
+trait AdapterName {
+    fn adapter_name(&self) -> &str;
+}
+
+impl AdapterName for dyn ToolAdapter {
+    fn adapter_name(&self) -> &str {
+        ToolAdapter::name(self)
+    }
+}
+
+impl AdapterName for dyn RulesAdapter {
+    fn adapter_name(&self) -> &str {
+        RulesAdapter::name(self)
+    }
+}
+
+impl AdapterName for dyn HooksAdapter {
+    fn adapter_name(&self) -> &str {
+        HooksAdapter::name(self)
+    }
+}
+
+impl AdapterName for dyn SkillsAdapter {
+    fn adapter_name(&self) -> &str {
+        SkillsAdapter::name(self)
+    }
+}
+
+/// Generic helper: find adapters by name, read their current state, and map
+/// the results.  Not-found adapters are reported as errors.
+fn dry_run_specified<A: AdapterName + ?Sized + 'static, T, R>(
+    tool_names: &[String],
+    find_fn: impl Fn(&str) -> Option<&'static A>,
+    read_fn: impl Fn(&A) -> Result<T, LorumError>,
+    ok_fn: impl Fn(String, T) -> R,
+    err_fn: impl Fn(String, LorumError) -> R,
+) -> Vec<R> {
+    let mut results = Vec::new();
+    for name in tool_names {
+        match find_fn(name) {
+            Some(adapter) => {
+                let adapter_name = adapter.adapter_name().to_string();
+                match read_fn(adapter) {
+                    Ok(current) => results.push(ok_fn(adapter_name, current)),
+                    Err(e) => results.push(err_fn(adapter_name, e)),
+                }
+            }
+            None => {
+                let err = LorumError::AdapterNotFound { name: name.clone() };
+                results.push(err_fn(name.clone(), err));
+            }
+        }
+    }
+    results
+}
+
+// ---------------------------------------------------------------------------
+// Sync result traits
+// ---------------------------------------------------------------------------
+
+/// Unified read-only access to the common fields of all sync result types.
+pub trait SyncResultItem {
+    /// Name of the tool that was synced.
+    fn tool(&self) -> &str;
+
+    /// Whether the sync succeeded.
+    fn success(&self) -> bool;
+
+    /// Error message if the sync failed.
+    fn error(&self) -> Option<&str>;
+}
+
+impl SyncResultItem for SyncResult {
+    fn tool(&self) -> &str {
+        &self.tool
+    }
+    fn success(&self) -> bool {
+        self.success
+    }
+    fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+}
+
+impl SyncResultItem for RulesSyncResult {
+    fn tool(&self) -> &str {
+        &self.tool
+    }
+    fn success(&self) -> bool {
+        self.success
+    }
+    fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+}
+
+impl SyncResultItem for HooksSyncResult {
+    fn tool(&self) -> &str {
+        &self.tool
+    }
+    fn success(&self) -> bool {
+        self.success
+    }
+    fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+}
+
+impl SyncResultItem for SkillsSyncResult {
+    fn tool(&self) -> &str {
+        &self.tool
+    }
+    fn success(&self) -> bool {
+        self.success
+    }
+    fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+}
+
+/// Returns a human-readable summary of a batch of sync results.
+pub fn summarize_sync_results<T: SyncResultItem>(results: &[T]) -> String {
+    let total = results.len();
+    let ok = results.iter().filter(|r| r.success()).count();
+    let failed = total - ok;
+    if failed == 0 {
+        format!("All {total} tools synced successfully.")
+    } else {
+        let names: Vec<_> = results
+            .iter()
+            .filter(|r| !r.success())
+            .map(|r| r.tool())
+            .collect();
+        format!("{ok}/{total} tools synced. Failed: {}", names.join(", "))
+    }
+}
 
 /// Result of syncing a single tool.
 #[derive(Debug)]
@@ -180,38 +319,23 @@ pub fn dry_run_all(mcp_config: &McpConfig) -> Vec<DryRunResult> {
 /// Tools that are not found in the registered adapters produce a failed
 /// [`DryRunResult`] with an appropriate error message.
 pub fn dry_run_tools(mcp_config: &McpConfig, tool_names: &[String]) -> Vec<DryRunResult> {
-    let mut results = Vec::new();
-    for name in tool_names {
-        match find_adapter(name) {
-            Some(adapter) => {
-                let adapter_name = adapter.name().to_string();
-                match adapter.read_mcp() {
-                    Ok(current) => results.push(DryRunResult {
-                        tool: adapter_name,
-                        success: true,
-                        diff: Some(compute_diff(&current, mcp_config)),
-                        error: None,
-                    }),
-                    Err(e) => results.push(DryRunResult {
-                        tool: adapter_name,
-                        success: false,
-                        diff: None,
-                        error: Some(e.to_string()),
-                    }),
-                }
-            }
-            None => {
-                let err = LorumError::AdapterNotFound { name: name.clone() };
-                results.push(DryRunResult {
-                    tool: name.clone(),
-                    success: false,
-                    diff: None,
-                    error: Some(err.to_string()),
-                })
-            }
-        }
-    }
-    results
+    dry_run_specified(
+        tool_names,
+        find_adapter,
+        |a| a.read_mcp(),
+        |tool, current| DryRunResult {
+            tool,
+            success: true,
+            diff: Some(compute_diff(&current, mcp_config)),
+            error: None,
+        },
+        |tool, e| DryRunResult {
+            tool,
+            success: false,
+            diff: None,
+            error: Some(e.to_string()),
+        },
+    )
 }
 
 /// Compute the diff between current and target MCP configs.
@@ -322,7 +446,7 @@ pub fn sync_rules_tools(
 ///
 /// Backs up the existing file (if present) before writing.
 fn sync_rules_adapter(
-    adapter: &dyn crate::adapters::RulesAdapter,
+    adapter: &dyn RulesAdapter,
     project_root: &Path,
     content: &str,
 ) -> RulesSyncResult {
@@ -392,41 +516,26 @@ pub fn dry_run_rules_tools(
     content: &str,
     tool_names: &[String],
 ) -> Vec<RulesDryRunResult> {
-    let mut results = Vec::new();
-    for name in tool_names {
-        match find_rules_adapter(name) {
-            Some(adapter) => {
-                let adapter_name = adapter.name().to_string();
-                match adapter.read_rules(project_root) {
-                    Ok(current) => {
-                        let needs_update = current.as_deref() != Some(content);
-                        results.push(RulesDryRunResult {
-                            tool: adapter_name,
-                            success: true,
-                            needs_update,
-                            error: None,
-                        });
-                    }
-                    Err(e) => results.push(RulesDryRunResult {
-                        tool: adapter_name,
-                        success: false,
-                        needs_update: false,
-                        error: Some(e.to_string()),
-                    }),
-                }
+    dry_run_specified(
+        tool_names,
+        find_rules_adapter,
+        |a| a.read_rules(project_root),
+        |tool, current| {
+            let needs_update = current.as_deref() != Some(content);
+            RulesDryRunResult {
+                tool,
+                success: true,
+                needs_update,
+                error: None,
             }
-            None => {
-                let err = LorumError::AdapterNotFound { name: name.clone() };
-                results.push(RulesDryRunResult {
-                    tool: name.clone(),
-                    success: false,
-                    needs_update: false,
-                    error: Some(err.to_string()),
-                });
-            }
-        }
-    }
-    results
+        },
+        |tool, e| RulesDryRunResult {
+            tool,
+            success: false,
+            needs_update: false,
+            error: Some(e.to_string()),
+        },
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -566,41 +675,23 @@ pub fn dry_run_hooks_tools(
     hooks_config: &HooksConfig,
     tool_names: &[String],
 ) -> Vec<HooksDryRunResult> {
-    let mut results = Vec::new();
-    for name in tool_names {
-        match find_hooks_adapter(name) {
-            Some(adapter) => {
-                let adapter_name = adapter.name().to_string();
-                match adapter.read_hooks() {
-                    Ok(current) => {
-                        let needs_update = current != *hooks_config;
-                        results.push(HooksDryRunResult {
-                            tool: adapter_name,
-                            success: true,
-                            needs_update,
-                            error: None,
-                        });
-                    }
-                    Err(e) => results.push(HooksDryRunResult {
-                        tool: adapter_name,
-                        success: false,
-                        needs_update: false,
-                        error: Some(e.to_string()),
-                    }),
-                }
-            }
-            None => {
-                let err = LorumError::AdapterNotFound { name: name.clone() };
-                results.push(HooksDryRunResult {
-                    tool: name.clone(),
-                    success: false,
-                    needs_update: false,
-                    error: Some(err.to_string()),
-                });
-            }
-        }
-    }
-    results
+    dry_run_specified(
+        tool_names,
+        find_hooks_adapter,
+        |a| a.read_hooks(),
+        |tool, current| HooksDryRunResult {
+            tool,
+            success: true,
+            needs_update: current != *hooks_config,
+            error: None,
+        },
+        |tool, e| HooksDryRunResult {
+            tool,
+            success: false,
+            needs_update: false,
+            error: Some(e.to_string()),
+        },
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -780,27 +871,20 @@ pub fn dry_run_skills_tools(
     skills_dir: &std::path::Path,
     tool_names: &[String],
 ) -> Vec<SkillsDryRunResult> {
-    let mut results = Vec::new();
-    for name in tool_names {
-        match find_skills_adapter(name) {
-            Some(adapter) => {
-                let result = dry_run_skills_adapter(adapter, skills_dir);
-                results.push(result);
-            }
-            None => {
-                let err = LorumError::AdapterNotFound { name: name.clone() };
-                results.push(SkillsDryRunResult {
-                    tool: name.clone(),
-                    success: false,
-                    skills_to_update: 0,
-                    skills_up_to_date: 0,
-                    skills_to_remove: 0,
-                    error: Some(err.to_string()),
-                });
-            }
-        }
-    }
-    results
+    dry_run_specified(
+        tool_names,
+        find_skills_adapter,
+        |a| Ok::<_, LorumError>(dry_run_skills_adapter(a, skills_dir)),
+        |_tool, result| result,
+        |tool, e| SkillsDryRunResult {
+            tool,
+            success: false,
+            skills_to_update: 0,
+            skills_up_to_date: 0,
+            skills_to_remove: 0,
+            error: Some(e.to_string()),
+        },
+    )
 }
 
 /// Dry-run a single skills adapter.

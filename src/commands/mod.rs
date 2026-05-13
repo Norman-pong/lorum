@@ -254,8 +254,8 @@ fn import_rules(
 
 fn print_import_preview(summaries: &[ImportSummary]) {
     println!(
-        "{:<15} {:>6} {:>6} {:>6} ERRORS",
-        "TOOL", "MCP", "HOOKS", "RULES"
+        "{:<15} {:>6} {:>6} {:>6} {:<30}",
+        "TOOL", "MCP", "HOOKS", "RULES", "ERRORS"
     );
     for s in summaries {
         let errors = if s.errors.is_empty() {
@@ -263,9 +263,14 @@ fn print_import_preview(summaries: &[ImportSummary]) {
         } else {
             s.errors.join(", ")
         };
+        let errors_truncated = if errors.len() > 30 {
+            format!("{}...", &errors[..27])
+        } else {
+            errors
+        };
         println!(
-            "{:<15} {:>6} {:>6} {:>6} {}",
-            s.tool, s.mcp_servers, s.hook_handlers, s.rules_sections, errors
+            "{:<15} {:>6} {:>6} {:>6} {:<30}",
+            s.tool, s.mcp_servers, s.hook_handlers, s.rules_sections, errors_truncated
         );
     }
 }
@@ -515,8 +520,9 @@ fn find_unset_env_refs(value: &str) -> Vec<String> {
 }
 
 /// Validate that a string is valid kebab-case (lowercase letters, digits, hyphens).
-fn is_valid_kebab_case(s: &str) -> bool {
+pub(crate) fn is_valid_kebab_case(s: &str) -> bool {
     !s.is_empty()
+        && s.len() <= 64
         && s.chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         && !s.starts_with('-')

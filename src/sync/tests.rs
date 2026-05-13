@@ -3,6 +3,7 @@
 use super::*;
 use crate::adapters::RulesAdapter;
 use crate::adapters::test_utils::make_server;
+use serial_test::serial;
 
 #[allow(clippy::type_complexity)]
 fn make_config(entries: &[(&str, &str, &[&str], &[(&str, &str)])]) -> McpConfig {
@@ -260,6 +261,7 @@ fn dry_run_rules_tools_unknown_tool_returns_error() {
 }
 
 #[test]
+#[serial]
 fn sync_rules_creates_backup_when_file_exists() {
     let dir = tempfile::tempdir().unwrap();
     let cursor = crate::adapters::cursor::CursorRulesAdapter;

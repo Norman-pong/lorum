@@ -69,16 +69,30 @@ impl RulesFile {
 /// ```
 pub fn parse_rules(content: &str) -> RulesFile {
     let mut preamble_lines: Vec<&str> = Vec::new();
-    let mut raw_sections: Vec<(&str, Vec<&str>)> = Vec::new();
     let mut current_section: Option<(&str, Vec<&str>)> = None;
 
+    // Deduplicate on the fly: latter sections with the same name overwrite
+    // earlier ones, but we preserve the original order of first appearance.
+    let mut seen = BTreeMap::<String, usize>::new();
+    let mut sections: Vec<RulesSection> = Vec::new();
+
     for line in content.lines() {
-        if line.starts_with("## ") {
-            // Finish the previous section (if any) before starting a new one.
-            if let Some(sec) = current_section.take() {
-                raw_sections.push(sec);
+        if let Some(stripped) = line.strip_prefix("## ") {
+            // Flush the previous section (if any) before starting a new one.
+            if let Some((name, body_lines)) = current_section.take() {
+                let content = body_lines.join("\n");
+                let trimmed = content.trim_end();
+                if let Some(&idx) = seen.get(name) {
+                    sections[idx].content = trimmed.to_owned();
+                } else {
+                    seen.insert(name.to_owned(), sections.len());
+                    sections.push(RulesSection {
+                        name: name.to_owned(),
+                        content: trimmed.to_owned(),
+                    });
+                }
             }
-            let name = line.strip_prefix("## ").unwrap_or("").trim();
+            let name = stripped.trim();
             current_section = Some((name, Vec::new()));
         } else if let Some((_name, ref mut body)) = current_section {
             body.push(line);
@@ -88,25 +102,15 @@ pub fn parse_rules(content: &str) -> RulesFile {
     }
 
     // Flush the last section.
-    if let Some(sec) = current_section {
-        raw_sections.push(sec);
-    }
-
-    // Deduplicate: latter sections with the same name overwrite earlier ones,
-    // but we preserve the original order of first appearance.
-    let mut seen = BTreeMap::<String, usize>::new();
-    let mut sections: Vec<RulesSection> = Vec::new();
-
-    for (name, body_lines) in &raw_sections {
+    if let Some((name, body_lines)) = current_section {
         let content = body_lines.join("\n");
         let trimmed = content.trim_end();
-        if let Some(&idx) = seen.get(*name) {
-            // Overwrite in place.
+        if let Some(&idx) = seen.get(name) {
             sections[idx].content = trimmed.to_owned();
         } else {
-            seen.insert((*name).to_owned(), sections.len());
+            seen.insert(name.to_owned(), sections.len());
             sections.push(RulesSection {
-                name: (*name).to_owned(),
+                name: name.to_owned(),
                 content: trimmed.to_owned(),
             });
         }
