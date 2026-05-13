@@ -18,7 +18,9 @@ fn backup_create_produces_new_timestamp_format() {
     fs::write(config_dir.join("settings.json"), r#"{"mcpServers": {}}"#).unwrap();
 
     let orig_home = std::env::var_os("HOME");
+    let orig_xdg = std::env::var_os("XDG_CONFIG_HOME");
     unsafe {
+        std::env::remove_var("XDG_CONFIG_HOME");
         std::env::set_var("HOME", dir.path());
     }
 
@@ -26,6 +28,11 @@ fn backup_create_produces_new_timestamp_format() {
         lorum::commands::run_backup_create(&["claude-code".to_string()], false, None).unwrap();
     });
 
+    if let Some(x) = orig_xdg {
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", x);
+        }
+    }
     if let Some(h) = orig_home {
         unsafe {
             std::env::set_var("HOME", h);
@@ -177,7 +184,9 @@ fn backup_create_all_creates_for_all_tools() {
     fs::write(codex_dir.join("config.toml"), "{}").unwrap();
 
     let orig_home = std::env::var_os("HOME");
+    let orig_xdg = std::env::var_os("XDG_CONFIG_HOME");
     unsafe {
+        std::env::remove_var("XDG_CONFIG_HOME");
         std::env::set_var("HOME", dir.path());
     }
 
@@ -185,6 +194,11 @@ fn backup_create_all_creates_for_all_tools() {
         lorum::commands::run_backup_create(&[], true, None).unwrap();
     });
 
+    if let Some(x) = orig_xdg {
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", x);
+        }
+    }
     if let Some(h) = orig_home {
         unsafe {
             std::env::set_var("HOME", h);
