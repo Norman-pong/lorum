@@ -72,6 +72,13 @@ enum Commands {
     /// Show the status of each managed tool.
     Status,
 
+    /// Run a comprehensive health check on tool configurations.
+    Doctor {
+        /// Only check the specified tools (defaults to all).
+        #[arg(long = "tools", num_args = 1.., value_delimiter = ',')]
+        tools: Vec<String>,
+    },
+
     /// Display or modify resolved configuration.
     Config {
         /// Resolve environment variables in the output.
@@ -374,6 +381,11 @@ impl Cli {
             }) => commands::run_sync(dry_run, &tools, expand_env, self.config.as_deref()),
             Some(Commands::Check) => commands::run_check(self.config.as_deref()),
             Some(Commands::Status) => commands::run_status(self.config.as_deref()),
+            Some(Commands::Doctor { tools }) => {
+                let results = commands::run_doctor(&tools)?;
+                commands::print_doctor_results(&results);
+                Ok(())
+            }
             Some(Commands::Config {
                 resolve_env,
                 local,

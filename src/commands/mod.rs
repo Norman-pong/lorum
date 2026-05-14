@@ -5,10 +5,14 @@
 
 use std::path::PathBuf;
 
+use crate::adapters::ValidationIssue;
 use crate::config;
 use crate::error::LorumError;
+use crate::sync::ConfigDiff;
 
 pub mod backup_cmds;
+pub mod doctor;
+pub use doctor::{run_doctor, print_doctor_results, print_consistency_reports, DoctorResult, ConsistencyReport};
 pub mod hook;
 #[cfg(test)]
 mod hook_tests;
@@ -380,6 +384,42 @@ fn print_sync_results(results: &[crate::sync::SyncResult]) -> usize {
     results.iter().filter(|r| !r.success).count()
 }
 
+/// Result of a structured configuration check for a single tool.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CheckResult {
+    /// Name of the tool that was checked.
+    pub tool: String,
+    /// Validation issues found for this tool.
+    pub issues: Vec<ValidationIssue>,
+    /// Config drift compared to the unified config, if applicable.
+    pub config_drift: Option<ConfigDiff>,
+}
+
+/// A single issue found during the self-check of the unified configuration.
+#[derive(Debug, Clone)]
+pub struct SelfCheckIssue {
+    /// Category of the issue (e.g. "mcp", "hooks", "skills").
+    pub category: String,
+    /// Human-readable description.
+    pub message: String,
+}
+
+/// Perform a self-check of the effective configuration and return structured issues.
+///
+/// Checks MCP servers (command availability, env references), hooks (event
+/// names, handler fields), and the unified skills directory structure.
+pub fn perform_self_check(config_path: Option<&str>) -> Result<Vec<SelfCheckIssue>, LorumError> {
+    let config =
+        config::resolve_effective_config_from_cwd(config_path.map(PathBuf::from).as_deref())?;
+
+    let mut issues = Vec::new();
+    check_mcp_servers_structured(&config, &mut issues);
+    check_hooks_structured(&config, &mut issues);
+    check_skills_structured(&mut issues);
+
+    Ok(issues)
+}
+
 /// Run the `check` subcommand: validates the effective configuration.
 ///
 /// Checks MCP servers (command availability, env references), hooks (event
@@ -388,10 +428,7 @@ pub fn run_check(config_path: Option<&str>) -> Result<(), LorumError> {
     let config =
         config::resolve_effective_config_from_cwd(config_path.map(PathBuf::from).as_deref())?;
 
-    let mut issues = Vec::new();
-    check_mcp_servers(&config, &mut issues);
-    check_hooks(&config, &mut issues);
-    check_skills(&mut issues);
+    let issues = perform_self_check(config_path)?;
 
     // ── Summary ─────────────────────────────────────────────────────
     if issues.is_empty() {
@@ -405,7 +442,7 @@ pub fn run_check(config_path: Option<&str>) -> Result<(), LorumError> {
         );
     } else {
         for issue in &issues {
-            eprintln!("issue: {issue}");
+            eprintln!("issue: {}", issue.message);
         }
         return Err(LorumError::Other {
             message: format!("{} issue(s) found", issues.len()),
@@ -415,17 +452,23 @@ pub fn run_check(config_path: Option<&str>) -> Result<(), LorumError> {
 }
 
 /// Check MCP servers for command availability and unset env references.
-fn check_mcp_servers(config: &config::LorumConfig, issues: &mut Vec<String>) {
+fn check_mcp_servers_structured(config: &config::LorumConfig, issues: &mut Vec<SelfCheckIssue>) {
     for (name, server) in &config.mcp.servers {
         if server.command.is_empty() {
-            issues.push(format!("server '{name}' has empty command"));
+            issues.push(SelfCheckIssue {
+                category: "mcp".into(),
+                message: format!("server '{name}' has empty command"),
+            });
             continue;
         }
         if !command_exists(&server.command) {
-            issues.push(format!(
-                "server '{name}' command '{}' not found on PATH",
-                server.command
-            ));
+            issues.push(SelfCheckIssue {
+                category: "mcp".into(),
+                message: format!(
+                    "server '{name}' command '{}' not found on PATH",
+                    server.command
+                ),
+            });
         }
         // Check for unset env references in command, args, and env values.
         let mut refs = find_unset_env_refs(&server.command);
@@ -436,57 +479,78 @@ fn check_mcp_servers(config: &config::LorumConfig, issues: &mut Vec<String>) {
             refs.extend(find_unset_env_refs(val));
         }
         for var in refs {
-            issues.push(format!(
-                "server '{name}' references unset environment variable '${{{var}}}'"
-            ));
+            issues.push(SelfCheckIssue {
+                category: "mcp".into(),
+                message: format!(
+                    "server '{name}' references unset environment variable '${{{var}}}'"
+                ),
+            });
         }
     }
 }
 
 /// Check hooks for valid event names and non-empty handler fields.
-fn check_hooks(config: &config::LorumConfig, issues: &mut Vec<String>) {
+fn check_hooks_structured(config: &config::LorumConfig, issues: &mut Vec<SelfCheckIssue>) {
     for (event, handlers) in &config.hooks.events {
         if event.is_empty() {
-            issues.push("hooks: empty event name".into());
+            issues.push(SelfCheckIssue {
+                category: "hooks".into(),
+                message: "hooks: empty event name".into(),
+            });
             continue;
         }
         if !is_valid_kebab_case(event) {
-            issues.push(format!("hooks: event '{event}' is not valid kebab-case"));
+            issues.push(SelfCheckIssue {
+                category: "hooks".into(),
+                message: format!("hooks: event '{event}' is not valid kebab-case"),
+            });
         }
         for (i, h) in handlers.iter().enumerate() {
             if h.matcher.is_empty() {
-                issues.push(format!(
-                    "hooks: event '{event}' handler {i} has empty matcher"
-                ));
+                issues.push(SelfCheckIssue {
+                    category: "hooks".into(),
+                    message: format!(
+                        "hooks: event '{event}' handler {i} has empty matcher"
+                    ),
+                });
             }
             if h.command.is_empty() {
-                issues.push(format!(
-                    "hooks: event '{event}' handler {i} has empty command"
-                ));
+                issues.push(SelfCheckIssue {
+                    category: "hooks".into(),
+                    message: format!(
+                        "hooks: event '{event}' handler {i} has empty command"
+                    ),
+                });
             }
         }
     }
 }
 
 /// Check the unified skills directory structure.
-fn check_skills(issues: &mut Vec<String>) {
+fn check_skills_structured(issues: &mut Vec<SelfCheckIssue>) {
     match crate::skills::global_skills_dir() {
         Ok(dir) if dir.exists() => match crate::skills::scan_skills_dir(&dir) {
             Ok(entries) => {
                 for entry in &entries {
                     if entry.manifest.name.is_empty() {
-                        issues.push(format!(
-                            "skill '{}' has empty manifest name",
-                            entry.dir_path.display()
-                        ));
+                        issues.push(SelfCheckIssue {
+                            category: "skills".into(),
+                            message: format!(
+                                "skill '{}' has empty manifest name",
+                                entry.dir_path.display()
+                            ),
+                        });
                     }
                 }
             }
             Err(e) => {
-                issues.push(format!(
-                    "failed to scan skills directory '{}': {e}",
-                    dir.display()
-                ));
+                issues.push(SelfCheckIssue {
+                    category: "skills".into(),
+                    message: format!(
+                        "failed to scan skills directory '{}': {e}",
+                        dir.display()
+                    ),
+                });
             }
         },
         _ => {} // No global skills directory yet — that's fine.
