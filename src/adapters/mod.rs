@@ -391,8 +391,13 @@ pub trait HooksAdapter: Send + Sync {
     fn tool_to_lorum_event(&self, tool_event: &str) -> Option<String>;
 }
 
-static ALL_HOOKS_ADAPTERS: LazyLock<Vec<Box<dyn HooksAdapter>>> =
-    LazyLock::new(|| vec![Box::new(claude::ClaudeAdapter), Box::new(kimi::KimiAdapter)]);
+static ALL_HOOKS_ADAPTERS: LazyLock<Vec<Box<dyn HooksAdapter>>> = LazyLock::new(|| {
+    vec![
+        Box::new(claude::ClaudeAdapter),
+        Box::new(kimi::KimiAdapter),
+        Box::new(cursor::CursorAdapter::new()),
+    ]
+});
 
 /// Return all registered hooks adapters.
 pub fn all_hooks_adapters() -> &'static [Box<dyn HooksAdapter>] {
@@ -569,6 +574,59 @@ pub fn pascal_to_kebab(s: &str) -> String {
     result
 }
 
+/// Convert a kebab-case string to camelCase.
+///
+/// # Examples
+///
+/// ```
+/// use lorum::adapters::kebab_to_camel;
+/// assert_eq!(kebab_to_camel("pre-tool-use"), "preToolUse");
+/// assert_eq!(kebab_to_camel("session-start"), "sessionStart");
+/// ```
+pub fn kebab_to_camel(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut upper_next = false;
+    for (i, c) in s.chars().enumerate() {
+        if c == '-' {
+            upper_next = true;
+        } else if i == 0 {
+            for lc in c.to_lowercase() {
+                result.push(lc);
+            }
+        } else if upper_next {
+            for uc in c.to_uppercase() {
+                result.push(uc);
+            }
+            upper_next = false;
+        } else {
+            for lc in c.to_lowercase() {
+                result.push(lc);
+            }
+        }
+    }
+    result
+}
+
+/// Convert a camelCase string to kebab-case.
+///
+/// # Examples
+///
+/// ```
+/// use lorum::adapters::camel_to_kebab;
+/// assert_eq!(camel_to_kebab("preToolUse"), "pre-tool-use");
+/// assert_eq!(camel_to_kebab("sessionStart"), "session-start");
+/// ```
+pub fn camel_to_kebab(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() * 2);
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() && i > 0 {
+            result.push('-');
+        }
+        result.extend(c.to_lowercase());
+    }
+    result
+}
+
 /// Shared test utilities for adapter tests.
 #[cfg(test)]
 pub(crate) mod test_utils {
@@ -669,12 +727,13 @@ mod tests {
     }
 
     #[test]
-    fn all_hooks_adapters_returns_two() {
+    fn all_hooks_adapters_returns_three() {
         let adapters = all_hooks_adapters();
-        assert_eq!(adapters.len(), 2);
+        assert_eq!(adapters.len(), 3);
         let names: Vec<_> = adapters.iter().map(|a| a.name()).collect();
         assert!(names.contains(&"claude-code"));
         assert!(names.contains(&"kimi"));
+        assert!(names.contains(&"cursor"));
     }
 
     #[test]
@@ -684,6 +743,7 @@ mod tests {
             "claude-code"
         );
         assert_eq!(find_hooks_adapter("kimi").unwrap().name(), "kimi");
+        assert_eq!(find_hooks_adapter("cursor").unwrap().name(), "cursor");
     }
 
     #[test]
@@ -743,6 +803,20 @@ mod tests {
             let back = claude.tool_to_lorum_event(&tool).unwrap();
             assert_eq!(back, *event, "roundtrip failed for {event}");
         }
+    }
+
+    #[test]
+    fn kebab_to_camel_and_camel_to_kebab_roundtrip() {
+        assert_eq!(kebab_to_camel("pre-tool-use"), "preToolUse");
+        assert_eq!(camel_to_kebab("preToolUse"), "pre-tool-use");
+        assert_eq!(
+            camel_to_kebab(&kebab_to_camel("session-start")),
+            "session-start"
+        );
+        assert_eq!(
+            kebab_to_camel(&camel_to_kebab("sessionStart")),
+            "sessionStart"
+        );
     }
 
     #[test]
