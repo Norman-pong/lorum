@@ -241,14 +241,14 @@ pub trait ToolAdapter: Send + Sync {
 static ALL_ADAPTERS: LazyLock<Vec<Box<dyn ToolAdapter>>> = LazyLock::new(|| {
     vec![
         Box::new(claude::ClaudeAdapter),
-        Box::new(codex::CodexAdapter),
+        Box::new(codex::CodexAdapter::new()),
         Box::new(continue_dev::ContinueDevAdapter::new()),
         Box::new(cursor::CursorAdapter::new()),
         Box::new(proma::PromaAdapter),
         Box::new(kimi::KimiAdapter),
         Box::new(opencode::OpencodeAdapter::new()),
         Box::new(trae::TraeAdapter::new()),
-        Box::new(windsurf::WindsurfAdapter),
+        Box::new(windsurf::WindsurfAdapter::new()),
     ]
 });
 
@@ -396,6 +396,8 @@ static ALL_HOOKS_ADAPTERS: LazyLock<Vec<Box<dyn HooksAdapter>>> = LazyLock::new(
         Box::new(claude::ClaudeAdapter),
         Box::new(kimi::KimiAdapter),
         Box::new(cursor::CursorAdapter::new()),
+        Box::new(codex::CodexAdapter::new()),
+        Box::new(windsurf::WindsurfAdapter::new()),
     ]
 });
 
@@ -477,14 +479,14 @@ pub fn find_skills_adapter(name: &str) -> Option<&'static dyn SkillsAdapter> {
 static ALL_CONFIG_VALIDATORS: LazyLock<Vec<Box<dyn ConfigValidator>>> = LazyLock::new(|| {
     vec![
         Box::new(claude::ClaudeAdapter) as Box<dyn ConfigValidator>,
-        Box::new(codex::CodexAdapter) as Box<dyn ConfigValidator>,
+        Box::new(codex::CodexAdapter::new()) as Box<dyn ConfigValidator>,
         Box::new(continue_dev::ContinueDevAdapter::new()) as Box<dyn ConfigValidator>,
         Box::new(cursor::CursorAdapter::new()) as Box<dyn ConfigValidator>,
         Box::new(proma::PromaAdapter) as Box<dyn ConfigValidator>,
         Box::new(kimi::KimiAdapter) as Box<dyn ConfigValidator>,
         Box::new(opencode::OpencodeAdapter::new()) as Box<dyn ConfigValidator>,
         Box::new(trae::TraeAdapter::new()) as Box<dyn ConfigValidator>,
-        Box::new(windsurf::WindsurfAdapter) as Box<dyn ConfigValidator>,
+        Box::new(windsurf::WindsurfAdapter::new()) as Box<dyn ConfigValidator>,
     ]
 });
 
@@ -727,13 +729,15 @@ mod tests {
     }
 
     #[test]
-    fn all_hooks_adapters_returns_three() {
+    fn all_hooks_adapters_returns_five() {
         let adapters = all_hooks_adapters();
-        assert_eq!(adapters.len(), 3);
+        assert_eq!(adapters.len(), 5);
         let names: Vec<_> = adapters.iter().map(|a| a.name()).collect();
         assert!(names.contains(&"claude-code"));
         assert!(names.contains(&"kimi"));
         assert!(names.contains(&"cursor"));
+        assert!(names.contains(&"codex"));
+        assert!(names.contains(&"windsurf"));
     }
 
     #[test]
@@ -744,6 +748,8 @@ mod tests {
         );
         assert_eq!(find_hooks_adapter("kimi").unwrap().name(), "kimi");
         assert_eq!(find_hooks_adapter("cursor").unwrap().name(), "cursor");
+        assert_eq!(find_hooks_adapter("codex").unwrap().name(), "codex");
+        assert_eq!(find_hooks_adapter("windsurf").unwrap().name(), "windsurf");
     }
 
     #[test]
