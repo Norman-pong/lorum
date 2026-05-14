@@ -54,7 +54,7 @@ fn test_rule_full_workflow() {
     // Step 4: rule_sync(root, false, &[]) — sync to all tools.
     let content = rules::render_rules(&rules);
     let results = sync::sync_rules_all(root, &content);
-    assert_eq!(results.len(), 3); // cursor, windsurf, codex
+    assert_eq!(results.len(), 7); // all registered rules adapters
     for r in &results {
         assert!(r.success, "sync failed for {}: {:?}", r.tool, r.error);
     }
@@ -97,7 +97,7 @@ fn test_rule_sync_dry_run() {
     // rule_sync(root, true, &[]) — dry run
     let content = rules::render_rules(&init_rules);
     let results = sync::dry_run_rules_all(root, &content);
-    assert_eq!(results.len(), 3);
+    assert_eq!(results.len(), 7); // all registered rules adapters
     for r in &results {
         assert!(
             r.success,
@@ -107,10 +107,13 @@ fn test_rule_sync_dry_run() {
         assert!(r.needs_update, "{} should need update", r.tool);
     }
 
-    // Verify no tool files were created.
+    // Verify no tool files were created (dry-run).
     assert!(!root.join(".cursorrules").exists());
     assert!(!root.join(".windsurfrules").exists());
     assert!(!root.join(".codex").join("rules.md").exists());
+    assert!(!root.join("CLAUDE.md").exists());
+    assert!(!root.join("AGENTS.md").exists());
+    assert!(!root.join(".trae").exists());
 }
 
 // ---------------------------------------------------------------------------
@@ -387,12 +390,16 @@ fn test_rule_crud_sequence() {
 #[test]
 fn test_all_rules_adapters_registered() {
     let adapters = all_rules_adapters();
-    assert_eq!(adapters.len(), 3);
+    assert_eq!(adapters.len(), 7);
 
     let names: Vec<&str> = adapters.iter().map(|a| a.name()).collect();
+    assert!(names.contains(&"claude-code"));
     assert!(names.contains(&"cursor"));
     assert!(names.contains(&"windsurf"));
     assert!(names.contains(&"codex"));
+    assert!(names.contains(&"kimi"));
+    assert!(names.contains(&"opencode"));
+    assert!(names.contains(&"trae"));
 }
 
 // ---------------------------------------------------------------------------
@@ -401,9 +408,13 @@ fn test_all_rules_adapters_registered() {
 
 #[test]
 fn test_find_rules_adapter_by_name() {
+    assert!(find_rules_adapter("claude-code").is_some());
     assert!(find_rules_adapter("cursor").is_some());
     assert!(find_rules_adapter("windsurf").is_some());
     assert!(find_rules_adapter("codex").is_some());
+    assert!(find_rules_adapter("kimi").is_some());
+    assert!(find_rules_adapter("opencode").is_some());
+    assert!(find_rules_adapter("trae").is_some());
     assert!(find_rules_adapter("nonexistent").is_none());
 }
 
@@ -435,7 +446,7 @@ fn test_rules_file_roundtrip_via_sync() {
     // Sync to all tools.
     let content = rules::render_rules(&original);
     let results = sync::sync_rules_all(root, &content);
-    assert_eq!(results.len(), 3);
+    assert_eq!(results.len(), 7); // all registered rules adapters
     for r in &results {
         assert!(r.success, "sync failed for {}: {:?}", r.tool, r.error);
     }

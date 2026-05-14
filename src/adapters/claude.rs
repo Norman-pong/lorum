@@ -34,11 +34,36 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::adapters::{
-    HooksAdapter, SkillsAdapter, ToolAdapter, json_utils, kebab_to_pascal, pascal_to_kebab,
+    HooksAdapter, RulesAdapter, SkillsAdapter, ToolAdapter, json_utils, kebab_to_pascal,
+    pascal_to_kebab, read_rules_file, write_rules_file,
 };
 use crate::config::{HookHandler, HooksConfig, McpConfig};
 use crate::error::LorumError;
 use crate::skills::{SkillEntry, copy_dir_recursive, scan_skills_dir};
+
+/// Adapter for Claude Code rules.
+///
+/// Reads and writes rules content from Claude Code's `CLAUDE.md`
+/// file located at the project root.
+pub struct ClaudeRulesAdapter;
+
+impl RulesAdapter for ClaudeRulesAdapter {
+    fn name(&self) -> &str {
+        "claude-code"
+    }
+
+    fn rules_path(&self, project_root: &Path) -> PathBuf {
+        project_root.join("CLAUDE.md")
+    }
+
+    fn read_rules(&self, project_root: &Path) -> Result<Option<String>, LorumError> {
+        read_rules_file(&self.rules_path(project_root))
+    }
+
+    fn write_rules(&self, project_root: &Path, content: &str) -> Result<(), LorumError> {
+        write_rules_file(&self.rules_path(project_root), content)
+    }
+}
 
 /// Adapter for Claude Code.
 ///
@@ -252,6 +277,56 @@ fn hooks_config_to_json_value(config: &HooksConfig) -> serde_json::Value {
         map.insert(pascal_event, serde_json::Value::Array(handlers_array));
     }
     serde_json::Value::Object(map)
+}
+
+#[cfg(test)]
+mod claude_rules_tests {
+    use super::*;
+
+    #[test]
+    fn rules_path_returns_claude_md() {
+        let adapter = ClaudeRulesAdapter;
+        let path = adapter.rules_path(Path::new("/tmp/myproject"));
+        assert_eq!(path, PathBuf::from("/tmp/myproject/CLAUDE.md"));
+    }
+
+    #[test]
+    fn read_rules_returns_none_when_file_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let adapter = ClaudeRulesAdapter;
+        let result = adapter.read_rules(dir.path()).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn write_rules_creates_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let adapter = ClaudeRulesAdapter;
+        let path = adapter.rules_path(dir.path());
+        assert!(!path.exists());
+
+        adapter
+            .write_rules(dir.path(), "Use 4-space indentation.")
+            .unwrap();
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn write_then_read_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let adapter = ClaudeRulesAdapter;
+        let content = "## Style\nUse 4-space indentation.\n";
+
+        adapter.write_rules(dir.path(), content).unwrap();
+        let read = adapter.read_rules(dir.path()).unwrap();
+        assert_eq!(read, Some(content.to_owned()));
+    }
+
+    #[test]
+    fn rules_adapter_name() {
+        let adapter = ClaudeRulesAdapter;
+        assert_eq!(adapter.name(), "claude-code");
+    }
 }
 
 #[cfg(test)]

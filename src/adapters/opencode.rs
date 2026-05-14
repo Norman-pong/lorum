@@ -28,10 +28,9 @@
 //! - `timeout` → ignored on read, not written
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::adapters::ToolAdapter;
-use crate::adapters::json_utils;
+use crate::adapters::{RulesAdapter, ToolAdapter, json_utils, read_rules_file, write_rules_file};
 use crate::config::{McpConfig, McpServer};
 use crate::error::LorumError;
 
@@ -40,6 +39,30 @@ use crate::error::LorumError;
 /// Reads and writes MCP server configurations from Opencode's
 /// `~/.config/opencode/opencode.json` (global, priority) or
 /// project-level `opencode.json` (fallback), preserving any non-MCP fields.
+/// Adapter for OpenCode rules.
+///
+/// Reads and writes rules content from OpenCode's `AGENTS.md`
+/// file located at the project root.
+pub struct OpenCodeRulesAdapter;
+
+impl RulesAdapter for OpenCodeRulesAdapter {
+    fn name(&self) -> &str {
+        "opencode"
+    }
+
+    fn rules_path(&self, project_root: &Path) -> PathBuf {
+        project_root.join("AGENTS.md")
+    }
+
+    fn read_rules(&self, project_root: &Path) -> Result<Option<String>, LorumError> {
+        read_rules_file(&self.rules_path(project_root))
+    }
+
+    fn write_rules(&self, project_root: &Path, content: &str) -> Result<(), LorumError> {
+        write_rules_file(&self.rules_path(project_root), content)
+    }
+}
+
 pub struct OpencodeAdapter {
     project_root: Option<PathBuf>,
 }
@@ -217,6 +240,56 @@ impl ToolAdapter for OpencodeAdapter {
         }
         root[MCP_FIELD] = serde_json::Value::Object(mcp_map);
         json_utils::write_json(&path, &root)
+    }
+}
+
+#[cfg(test)]
+mod opencode_rules_tests {
+    use super::*;
+
+    #[test]
+    fn rules_path_returns_agents_md() {
+        let adapter = OpenCodeRulesAdapter;
+        let path = adapter.rules_path(Path::new("/tmp/myproject"));
+        assert_eq!(path, PathBuf::from("/tmp/myproject/AGENTS.md"));
+    }
+
+    #[test]
+    fn read_rules_returns_none_when_file_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let adapter = OpenCodeRulesAdapter;
+        let result = adapter.read_rules(dir.path()).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn write_rules_creates_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let adapter = OpenCodeRulesAdapter;
+        let path = adapter.rules_path(dir.path());
+        assert!(!path.exists());
+
+        adapter
+            .write_rules(dir.path(), "Use 4-space indentation.")
+            .unwrap();
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn write_then_read_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let adapter = OpenCodeRulesAdapter;
+        let content = "## Style\nUse 4-space indentation.\n";
+
+        adapter.write_rules(dir.path(), content).unwrap();
+        let read = adapter.read_rules(dir.path()).unwrap();
+        assert_eq!(read, Some(content.to_owned()));
+    }
+
+    #[test]
+    fn rules_adapter_name() {
+        let adapter = OpenCodeRulesAdapter;
+        assert_eq!(adapter.name(), "opencode");
     }
 }
 

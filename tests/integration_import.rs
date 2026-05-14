@@ -255,9 +255,14 @@ fn all_adapter_tool_names_returns_union() {
     // Should include MCP adapters
     assert!(names.iter().any(|n| n == "claude-code"));
     assert!(names.iter().any(|n| n == "codex"));
-    // Should include rules adapters (cursor, windsurf)
+    // Should include rules adapters
+    assert!(names.iter().any(|n| n == "claude-code"));
     assert!(names.iter().any(|n| n == "cursor"));
     assert!(names.iter().any(|n| n == "windsurf"));
+    assert!(names.iter().any(|n| n == "codex"));
+    assert!(names.iter().any(|n| n == "kimi"));
+    assert!(names.iter().any(|n| n == "opencode"));
+    assert!(names.iter().any(|n| n == "trae"));
     // Should include hooks adapters (claude-code, kimi)
     assert!(names.iter().any(|n| n == "kimi"));
     // Should include skills adapters (claude-code, proma)

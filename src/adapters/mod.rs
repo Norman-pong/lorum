@@ -122,9 +122,13 @@ pub trait RulesAdapter: Send + Sync {
 
 static ALL_RULES_ADAPTERS: LazyLock<Vec<Box<dyn RulesAdapter>>> = LazyLock::new(|| {
     vec![
+        Box::new(claude::ClaudeRulesAdapter),
         Box::new(cursor::CursorRulesAdapter),
         Box::new(windsurf::WindsurfRulesAdapter),
         Box::new(codex::CodexRulesAdapter),
+        Box::new(kimi::KimiRulesAdapter),
+        Box::new(opencode::OpenCodeRulesAdapter),
+        Box::new(trae::TraeRulesAdapter),
     ]
 });
 
@@ -413,20 +417,31 @@ mod tests {
     }
 
     #[test]
-    fn all_rules_adapters_returns_three() {
+    fn all_rules_adapters_returns_expected_count() {
         let adapters = all_rules_adapters();
-        assert_eq!(adapters.len(), 3);
+        assert_eq!(adapters.len(), 7);
         let names: Vec<_> = adapters.iter().map(|a| a.name()).collect();
+        assert!(names.contains(&"claude-code"));
         assert!(names.contains(&"cursor"));
         assert!(names.contains(&"windsurf"));
         assert!(names.contains(&"codex"));
+        assert!(names.contains(&"kimi"));
+        assert!(names.contains(&"opencode"));
+        assert!(names.contains(&"trae"));
     }
 
     #[test]
     fn find_rules_adapter_finds_known() {
+        assert_eq!(
+            find_rules_adapter("claude-code").unwrap().name(),
+            "claude-code"
+        );
         assert_eq!(find_rules_adapter("cursor").unwrap().name(), "cursor");
         assert_eq!(find_rules_adapter("windsurf").unwrap().name(), "windsurf");
         assert_eq!(find_rules_adapter("codex").unwrap().name(), "codex");
+        assert_eq!(find_rules_adapter("kimi").unwrap().name(), "kimi");
+        assert_eq!(find_rules_adapter("opencode").unwrap().name(), "opencode");
+        assert_eq!(find_rules_adapter("trae").unwrap().name(), "trae");
     }
 
     #[test]
