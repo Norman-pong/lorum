@@ -14,7 +14,10 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{ConfigValidator, RulesAdapter, ToolAdapter, ValidationIssue, default_validate_config, toml_utils};
+use crate::adapters::{
+    ConfigValidator, RulesAdapter, ToolAdapter, ValidationIssue, default_validate_config,
+    toml_utils,
+};
 use crate::config::McpConfig;
 use crate::error::LorumError;
 

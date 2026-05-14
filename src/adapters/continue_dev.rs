@@ -34,7 +34,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{ConfigValidator, Severity, ToolAdapter, ValidationIssue, json_utils, validate_all_syntax};
+use crate::adapters::{
+    ConfigValidator, Severity, ToolAdapter, ValidationIssue, json_utils, validate_all_syntax,
+};
 use crate::config::{McpConfig, McpServer};
 use crate::error::LorumError;
 
@@ -140,23 +142,17 @@ impl ConfigValidator for ContinueDevAdapter {
         let mut issues = validate_all_syntax(&self.config_paths());
 
         // 2. Extra check: warn if both YAML and JSON config files exist
-        let yaml_paths: Vec<_> = [
-            self.project_yaml_path(),
-            Self::global_yaml_path(),
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|p| p.exists())
-        .collect();
+        let yaml_paths: Vec<_> = [self.project_yaml_path(), Self::global_yaml_path()]
+            .into_iter()
+            .flatten()
+            .filter(|p| p.exists())
+            .collect();
 
-        let json_paths: Vec<_> = [
-            self.project_json_path(),
-            Self::global_json_path(),
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|p| p.exists())
-        .collect();
+        let json_paths: Vec<_> = [self.project_json_path(), Self::global_json_path()]
+            .into_iter()
+            .flatten()
+            .filter(|p| p.exists())
+            .collect();
 
         if !yaml_paths.is_empty() && !json_paths.is_empty() {
             issues.push(ValidationIssue {

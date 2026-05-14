@@ -18,7 +18,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::adapters::json_utils;
-use crate::adapters::{ConfigValidator, SkillsAdapter, ToolAdapter, ValidationIssue, default_validate_config};
+use crate::adapters::{
+    ConfigValidator, SkillsAdapter, ToolAdapter, ValidationIssue, default_validate_config,
+};
 use crate::config::McpConfig;
 use crate::error::LorumError;
 use crate::skills::{SkillEntry, copy_dir_recursive, scan_skills_dir};

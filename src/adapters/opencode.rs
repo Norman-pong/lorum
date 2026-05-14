@@ -30,7 +30,10 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{ConfigValidator, RulesAdapter, Severity, ToolAdapter, ValidationIssue, json_utils, read_rules_file, validate_all_syntax, write_rules_file};
+use crate::adapters::{
+    ConfigValidator, RulesAdapter, Severity, ToolAdapter, ValidationIssue, json_utils,
+    read_rules_file, validate_all_syntax, write_rules_file,
+};
 use crate::config::{McpConfig, McpServer};
 use crate::error::LorumError;
 
@@ -152,9 +155,11 @@ impl ConfigValidator for OpencodeAdapter {
                 json_utils::read_existing_json(path)
                     .ok()
                     .and_then(|root| {
-                        root.get(MCP_FIELD)
-                            .and_then(|v| v.as_object())
-                            .map(|obj| obj.keys().cloned().collect::<std::collections::HashSet<String>>())
+                        root.get(MCP_FIELD).and_then(|v| v.as_object()).map(|obj| {
+                            obj.keys()
+                                .cloned()
+                                .collect::<std::collections::HashSet<String>>()
+                        })
                     })
                     .unwrap_or_default()
             } else {
@@ -165,9 +170,11 @@ impl ConfigValidator for OpencodeAdapter {
                 json_utils::read_existing_json(path)
                     .ok()
                     .and_then(|root| {
-                        root.get(MCP_FIELD)
-                            .and_then(|v| v.as_object())
-                            .map(|obj| obj.keys().cloned().collect::<std::collections::HashSet<String>>())
+                        root.get(MCP_FIELD).and_then(|v| v.as_object()).map(|obj| {
+                            obj.keys()
+                                .cloned()
+                                .collect::<std::collections::HashSet<String>>()
+                        })
                     })
                     .unwrap_or_default()
             } else {

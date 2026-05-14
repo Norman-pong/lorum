@@ -34,8 +34,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::adapters::{
-    ConfigValidator, HooksAdapter, RulesAdapter, SkillsAdapter, ToolAdapter, ValidationIssue, default_validate_config, json_utils, kebab_to_pascal,
-    pascal_to_kebab, read_rules_file, write_rules_file,
+    ConfigValidator, HooksAdapter, RulesAdapter, SkillsAdapter, ToolAdapter, ValidationIssue,
+    default_validate_config, json_utils, kebab_to_pascal, pascal_to_kebab, read_rules_file,
+    write_rules_file,
 };
 use crate::config::{HookHandler, HooksConfig, McpConfig};
 use crate::error::LorumError;

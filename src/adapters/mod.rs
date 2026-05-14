@@ -183,7 +183,9 @@ pub fn validate_all_syntax(config_paths: &[PathBuf]) -> Vec<ValidationIssue> {
 /// Adapters that do not need custom validation logic can call this
 /// function from their `validate_config` implementation to perform
 /// standard syntax validation on all config files.
-pub fn default_validate_config(adapter: &dyn ToolAdapter) -> Result<Vec<ValidationIssue>, LorumError> {
+pub fn default_validate_config(
+    adapter: &dyn ToolAdapter,
+) -> Result<Vec<ValidationIssue>, LorumError> {
     let paths: Vec<PathBuf> = adapter.config_paths();
     Ok(validate_all_syntax(&paths))
 }
@@ -736,7 +738,11 @@ mod tests {
         let path = dir.path().join("config.json");
         fs::write(&path, r#"{"key": "value"}"#).unwrap();
         let issues = validate_syntax(&path);
-        assert!(issues.is_empty(), "expected no issues for valid JSON, got: {:?}", issues);
+        assert!(
+            issues.is_empty(),
+            "expected no issues for valid JSON, got: {:?}",
+            issues
+        );
     }
 
     #[test]
@@ -745,7 +751,11 @@ mod tests {
         let path = dir.path().join("config.toml");
         fs::write(&path, "key = \"value\"\n").unwrap();
         let issues = validate_syntax(&path);
-        assert!(issues.is_empty(), "expected no issues for valid TOML, got: {:?}", issues);
+        assert!(
+            issues.is_empty(),
+            "expected no issues for valid TOML, got: {:?}",
+            issues
+        );
     }
 
     #[test]
@@ -754,7 +764,11 @@ mod tests {
         let path = dir.path().join("config.yaml");
         fs::write(&path, "key: value\n").unwrap();
         let issues = validate_syntax(&path);
-        assert!(issues.is_empty(), "expected no issues for valid YAML, got: {:?}", issues);
+        assert!(
+            issues.is_empty(),
+            "expected no issues for valid YAML, got: {:?}",
+            issues
+        );
     }
 
     #[test]
@@ -831,15 +845,27 @@ mod tests {
 
     #[test]
     fn test_find_config_validator_finds_known() {
-        assert_eq!(find_config_validator("claude-code").unwrap().name(), "claude-code");
+        assert_eq!(
+            find_config_validator("claude-code").unwrap().name(),
+            "claude-code"
+        );
         assert_eq!(find_config_validator("codex").unwrap().name(), "codex");
-        assert_eq!(find_config_validator("continue").unwrap().name(), "continue");
+        assert_eq!(
+            find_config_validator("continue").unwrap().name(),
+            "continue"
+        );
         assert_eq!(find_config_validator("cursor").unwrap().name(), "cursor");
         assert_eq!(find_config_validator("proma").unwrap().name(), "proma");
         assert_eq!(find_config_validator("kimi").unwrap().name(), "kimi");
-        assert_eq!(find_config_validator("opencode").unwrap().name(), "opencode");
+        assert_eq!(
+            find_config_validator("opencode").unwrap().name(),
+            "opencode"
+        );
         assert_eq!(find_config_validator("trae").unwrap().name(), "trae");
-        assert_eq!(find_config_validator("windsurf").unwrap().name(), "windsurf");
+        assert_eq!(
+            find_config_validator("windsurf").unwrap().name(),
+            "windsurf"
+        );
     }
 
     #[test]

@@ -12,7 +12,9 @@ use crate::sync::ConfigDiff;
 
 pub mod backup_cmds;
 pub mod doctor;
-pub use doctor::{run_doctor, print_doctor_results, print_consistency_reports, DoctorResult, ConsistencyReport};
+pub use doctor::{
+    ConsistencyReport, DoctorResult, print_consistency_reports, print_doctor_results, run_doctor,
+};
 pub mod hook;
 #[cfg(test)]
 mod hook_tests;
@@ -509,17 +511,13 @@ fn check_hooks_structured(config: &config::LorumConfig, issues: &mut Vec<SelfChe
             if h.matcher.is_empty() {
                 issues.push(SelfCheckIssue {
                     category: "hooks".into(),
-                    message: format!(
-                        "hooks: event '{event}' handler {i} has empty matcher"
-                    ),
+                    message: format!("hooks: event '{event}' handler {i} has empty matcher"),
                 });
             }
             if h.command.is_empty() {
                 issues.push(SelfCheckIssue {
                     category: "hooks".into(),
-                    message: format!(
-                        "hooks: event '{event}' handler {i} has empty command"
-                    ),
+                    message: format!("hooks: event '{event}' handler {i} has empty command"),
                 });
             }
         }
@@ -546,10 +544,7 @@ fn check_skills_structured(issues: &mut Vec<SelfCheckIssue>) {
             Err(e) => {
                 issues.push(SelfCheckIssue {
                     category: "skills".into(),
-                    message: format!(
-                        "failed to scan skills directory '{}': {e}",
-                        dir.display()
-                    ),
+                    message: format!("failed to scan skills directory '{}': {e}", dir.display()),
                 });
             }
         },

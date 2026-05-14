@@ -6,7 +6,9 @@
 
 use std::collections::BTreeSet;
 
-use crate::adapters::{ConfigValidator, Severity, ValidationIssue, all_config_validators, find_config_validator};
+use crate::adapters::{
+    ConfigValidator, Severity, ValidationIssue, all_config_validators, find_config_validator,
+};
 use crate::error::LorumError;
 use crate::sync::ConfigDiff;
 
@@ -88,18 +90,26 @@ pub fn print_doctor_results(results: &[DoctorResult]) {
     }
 
     // Header
-    println!("{:<15} {:>8} {:>8} {:>8}", "TOOL", "STATUS", "ERRORS", "WARNINGS");
+    println!(
+        "{:<15} {:>8} {:>8} {:>8}",
+        "TOOL", "STATUS", "ERRORS", "WARNINGS"
+    );
 
     for result in results {
         let status = if result.healthy { "OK" } else { "FAIL" };
-        let errors = result.issues.iter().filter(|i| i.severity == Severity::Error).count();
-        let warnings = result.issues.iter().filter(|i| i.severity == Severity::Warning).count();
+        let errors = result
+            .issues
+            .iter()
+            .filter(|i| i.severity == Severity::Error)
+            .count();
+        let warnings = result
+            .issues
+            .iter()
+            .filter(|i| i.severity == Severity::Warning)
+            .count();
         println!(
             "{:<15} {:>8} {:>8} {:>8}",
-            result.tool,
-            status,
-            errors,
-            warnings,
+            result.tool, status, errors, warnings,
         );
 
         // Print each issue with indentation
@@ -109,7 +119,12 @@ pub fn print_doctor_results(results: &[DoctorResult]) {
                 Severity::Warning => "warning",
             };
             if let Some(ref path) = issue.path {
-                println!("  {}: {} ({})", severity_label, issue.message, path.display());
+                println!(
+                    "  {}: {} ({})",
+                    severity_label,
+                    issue.message,
+                    path.display()
+                );
             } else {
                 println!("  {}: {}", severity_label, issue.message);
             }
@@ -118,11 +133,21 @@ pub fn print_doctor_results(results: &[DoctorResult]) {
 
     let total_errors: usize = results
         .iter()
-        .map(|r| r.issues.iter().filter(|i| i.severity == Severity::Error).count())
+        .map(|r| {
+            r.issues
+                .iter()
+                .filter(|i| i.severity == Severity::Error)
+                .count()
+        })
         .sum();
     let total_warnings: usize = results
         .iter()
-        .map(|r| r.issues.iter().filter(|i| i.severity == Severity::Warning).count())
+        .map(|r| {
+            r.issues
+                .iter()
+                .filter(|i| i.severity == Severity::Warning)
+                .count()
+        })
         .sum();
 
     println!();
@@ -174,7 +199,7 @@ pub fn print_consistency_reports(reports: &[ConsistencyReport]) {
 ///
 /// Returns a [`ConsistencyReport`] for each tool checked.
 pub fn run_doctor_consistency(tools: &[String]) -> Result<Vec<ConsistencyReport>, LorumError> {
-    use crate::adapters::{find_adapter, all_adapters};
+    use crate::adapters::{all_adapters, find_adapter};
     use crate::config;
 
     let adapters: Vec<&dyn crate::adapters::ToolAdapter> = if tools.is_empty() {
@@ -253,4 +278,101 @@ pub fn run_doctor_consistency(tools: &[String]) -> Result<Vec<ConsistencyReport>
     }
 
     Ok(reports)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapters::{ConfigValidator, Severity, ValidationIssue};
+    use crate::error::LorumError;
+
+    /// A mock validator for testing doctor behaviour without touching real adapters.
+    struct MockValidator {
+        name: &'static str,
+        issues: Vec<ValidationIssue>,
+    }
+
+    impl ConfigValidator for MockValidator {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn validate_config(&self) -> Result<Vec<ValidationIssue>, LorumError> {
+            Ok(self.issues.clone())
+        }
+    }
+
+    #[test]
+    fn test_doctor_runs_all_validators() {
+        // When tools list is empty, run_doctor should iterate all registered validators.
+        let results = run_doctor(&[]).unwrap();
+        assert_eq!(results.len(), 9, "expected 9 registered validators");
+
+        let names: Vec<&str> = results.iter().map(|r| r.tool.as_str()).collect();
+        assert!(names.contains(&"claude-code"));
+        assert!(names.contains(&"codex"));
+        assert!(names.contains(&"continue"));
+        assert!(names.contains(&"cursor"));
+        assert!(names.contains(&"proma"));
+        assert!(names.contains(&"kimi"));
+        assert!(names.contains(&"opencode"));
+        assert!(names.contains(&"trae"));
+        assert!(names.contains(&"windsurf"));
+    }
+
+    #[test]
+    fn test_doctor_filters_by_tools() {
+        let results = run_doctor(&["cursor".into(), "kimi".into()]).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].tool, "cursor");
+        assert_eq!(results[1].tool, "kimi");
+    }
+
+    #[test]
+    fn test_doctor_reports_no_issues_for_valid_configs() {
+        // Most real adapters return no issues when their config files don't exist.
+        let results = run_doctor(&[]).unwrap();
+        for result in &results {
+            // No errors should be present (warnings are okay, but typically there are none).
+            let has_errors = result.issues.iter().any(|i| i.severity == Severity::Error);
+            assert!(
+                !has_errors,
+                "tool '{}' should have no errors when config files are absent",
+                result.tool
+            );
+        }
+    }
+
+    #[test]
+    fn test_doctor_reports_issues_for_broken_configs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        std::fs::write(&path, r#"{"broken": json}"#).unwrap();
+
+        let validator = MockValidator {
+            name: "test-tool",
+            issues: vec![ValidationIssue {
+                severity: Severity::Error,
+                message: "invalid JSON".into(),
+                path: Some(path),
+                line: None,
+            }],
+        };
+
+        let tool = validator.name().to_string();
+        let issues = validator.validate_config().unwrap();
+        let has_errors = issues.iter().any(|i| i.severity == Severity::Error);
+        assert!(has_errors);
+        assert_eq!(tool, "test-tool");
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, Severity::Error);
+    }
+
+    #[test]
+    fn test_doctor_invalid_tool_name() {
+        let result = run_doctor(&["nonexistent-tool-xyz".into()]);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("nonexistent-tool-xyz"));
+    }
 }

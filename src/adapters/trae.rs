@@ -17,7 +17,10 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{ConfigValidator, RulesAdapter, ToolAdapter, ValidationIssue, default_validate_config, json_utils, read_rules_file, write_rules_file};
+use crate::adapters::{
+    ConfigValidator, RulesAdapter, ToolAdapter, ValidationIssue, default_validate_config,
+    json_utils, read_rules_file, write_rules_file,
+};
 use crate::config::McpConfig;
 use crate::error::LorumError;
 
