@@ -34,7 +34,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::adapters::{
-    HooksAdapter, RulesAdapter, SkillsAdapter, ToolAdapter, json_utils, kebab_to_pascal,
+    ConfigValidator, HooksAdapter, RulesAdapter, SkillsAdapter, ToolAdapter, ValidationIssue, default_validate_config, json_utils, kebab_to_pascal,
     pascal_to_kebab, read_rules_file, write_rules_file,
 };
 use crate::config::{HookHandler, HooksConfig, McpConfig};
@@ -163,6 +163,16 @@ impl HooksAdapter for ClaudeAdapter {
         let mut root = json_utils::read_existing_json(&path)?;
         root["hooks"] = hooks_config_to_json_value(config);
         json_utils::write_json(&path, &root)
+    }
+}
+
+impl ConfigValidator for ClaudeAdapter {
+    fn name(&self) -> &str {
+        "claude-code"
+    }
+
+    fn validate_config(&self) -> Result<Vec<ValidationIssue>, LorumError> {
+        default_validate_config(self)
     }
 }
 

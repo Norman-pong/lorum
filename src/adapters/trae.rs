@@ -17,7 +17,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{RulesAdapter, ToolAdapter, json_utils, read_rules_file, write_rules_file};
+use crate::adapters::{ConfigValidator, RulesAdapter, ToolAdapter, ValidationIssue, default_validate_config, json_utils, read_rules_file, write_rules_file};
 use crate::config::McpConfig;
 use crate::error::LorumError;
 
@@ -64,6 +64,16 @@ impl TraeAdapter {
 impl Default for TraeAdapter {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl ConfigValidator for TraeAdapter {
+    fn name(&self) -> &str {
+        "trae"
+    }
+
+    fn validate_config(&self) -> Result<Vec<ValidationIssue>, LorumError> {
+        default_validate_config(self)
     }
 }
 
@@ -289,7 +299,7 @@ mod tests {
     #[test]
     fn adapter_name() {
         let adapter = TraeAdapter::new();
-        assert_eq!(adapter.name(), "trae");
+        assert_eq!(ToolAdapter::name(&adapter), "trae");
     }
 
     #[test]

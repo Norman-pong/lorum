@@ -14,9 +14,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::adapters::RulesAdapter;
-use crate::adapters::ToolAdapter;
-use crate::adapters::toml_utils;
+use crate::adapters::{ConfigValidator, RulesAdapter, ToolAdapter, ValidationIssue, default_validate_config, toml_utils};
 use crate::config::McpConfig;
 use crate::error::LorumError;
 
@@ -32,6 +30,16 @@ const MCP_FIELD: &str = "mcp_servers";
 /// Returns the global Codex config path: `~/.codex/config.toml`.
 fn global_config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".codex").join("config.toml"))
+}
+
+impl ConfigValidator for CodexAdapter {
+    fn name(&self) -> &str {
+        "codex"
+    }
+
+    fn validate_config(&self) -> Result<Vec<ValidationIssue>, LorumError> {
+        default_validate_config(self)
+    }
 }
 
 impl ToolAdapter for CodexAdapter {
@@ -277,6 +285,6 @@ KEY = "value"
     #[test]
     fn adapter_name() {
         let adapter = CodexAdapter;
-        assert_eq!(adapter.name(), "codex");
+        assert_eq!(ToolAdapter::name(&adapter), "codex");
     }
 }

@@ -25,8 +25,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::adapters::{
-    HooksAdapter, RulesAdapter, ToolAdapter, kebab_to_pascal, pascal_to_kebab, read_rules_file,
-    toml_utils, write_rules_file,
+    ConfigValidator, HooksAdapter, RulesAdapter, Severity, ToolAdapter, ValidationIssue,
+    kebab_to_pascal, pascal_to_kebab, read_rules_file, toml_utils, validate_all_syntax,
+    write_rules_file,
 };
 use crate::config::{HookHandler, HooksConfig, McpConfig};
 use crate::error::LorumError;
@@ -111,6 +112,83 @@ impl HooksAdapter for KimiAdapter {
         root_table.insert("hooks".into(), toml::Value::Array(hooks_array));
 
         toml_utils::write_toml(&path, &root)
+    }
+}
+
+impl ConfigValidator for KimiAdapter {
+    fn name(&self) -> &str {
+        "kimi"
+    }
+
+    fn validate_config(&self) -> Result<Vec<ValidationIssue>, LorumError> {
+        // 1. Run default syntax validation (TOML)
+        let mut issues = validate_all_syntax(&ToolAdapter::config_paths(self));
+
+        // 2. Extra check: validate [mcp.client] field structure
+        if let Some(ref path) = global_config_path() {
+            if path.exists() {
+                let content = match std::fs::read_to_string(path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        issues.push(ValidationIssue {
+                            severity: Severity::Error,
+                            message: format!("failed to read file: {e}"),
+                            path: Some(path.clone()),
+                            line: None,
+                        });
+                        return Ok(issues);
+                    }
+                };
+
+                let root: toml::Value = match toml::from_str(&content) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        // Syntax errors already reported by validate_all_syntax
+                        return Ok(issues);
+                    }
+                };
+
+                if let Some(client) = root
+                    .get(MCP_TOP)
+                    .and_then(|v| v.get(MCP_CLIENT))
+                    .and_then(|v| v.as_table())
+                {
+                    for (server_name, server_value) in client {
+                        if let Some(server_table) = server_value.as_table() {
+                            // Check for required `command` field
+                            if !server_table.contains_key("command") {
+                                issues.push(ValidationIssue {
+                                    severity: Severity::Warning,
+                                    message: format!(
+                                        "MCP server '{}' is missing required 'command' field",
+                                        server_name
+                                    ),
+                                    path: Some(path.clone()),
+                                    line: None,
+                                });
+                            }
+
+                            // Check `args` is an array if present
+                            if let Some(args) = server_table.get("args") {
+                                if !args.is_array() {
+                                    issues.push(ValidationIssue {
+                                        severity: Severity::Warning,
+                                        message: format!(
+                                            "MCP server '{}' has 'args' that is not an array",
+                                            server_name
+                                        ),
+                                        path: Some(path.clone()),
+                                        line: None,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(issues)
     }
 }
 

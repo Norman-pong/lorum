@@ -18,7 +18,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::adapters::json_utils;
-use crate::adapters::{SkillsAdapter, ToolAdapter};
+use crate::adapters::{ConfigValidator, SkillsAdapter, ToolAdapter, ValidationIssue, default_validate_config};
 use crate::config::McpConfig;
 use crate::error::LorumError;
 use crate::skills::{SkillEntry, copy_dir_recursive, scan_skills_dir};
@@ -95,6 +95,16 @@ impl SkillsAdapter for PromaSkillsAdapter {
             std::fs::remove_dir_all(target)?;
         }
         Ok(())
+    }
+}
+
+impl ConfigValidator for PromaAdapter {
+    fn name(&self) -> &str {
+        "proma"
+    }
+
+    fn validate_config(&self) -> Result<Vec<ValidationIssue>, LorumError> {
+        default_validate_config(self)
     }
 }
 

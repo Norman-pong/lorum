@@ -23,7 +23,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{RulesAdapter, ToolAdapter, json_utils, read_rules_file, write_rules_file};
+use crate::adapters::{ConfigValidator, RulesAdapter, ToolAdapter, ValidationIssue, default_validate_config, json_utils, read_rules_file, write_rules_file};
 use crate::config::McpConfig;
 use crate::error::LorumError;
 
@@ -67,6 +67,16 @@ const MCP_FIELD: &str = "mcpServers";
 /// Returns the global Windsurf config path: `~/.codeium/windsurf/mcp_config.json`.
 fn global_config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".codeium").join("windsurf").join("mcp_config.json"))
+}
+
+impl ConfigValidator for WindsurfAdapter {
+    fn name(&self) -> &str {
+        "windsurf"
+    }
+
+    fn validate_config(&self) -> Result<Vec<ValidationIssue>, LorumError> {
+        default_validate_config(self)
+    }
 }
 
 impl ToolAdapter for WindsurfAdapter {
@@ -337,6 +347,6 @@ mod tests {
     #[test]
     fn adapter_name() {
         let adapter = WindsurfAdapter;
-        assert_eq!(adapter.name(), "windsurf");
+        assert_eq!(ToolAdapter::name(&adapter), "windsurf");
     }
 }

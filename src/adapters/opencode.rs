@@ -30,7 +30,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{RulesAdapter, ToolAdapter, json_utils, read_rules_file, write_rules_file};
+use crate::adapters::{ConfigValidator, RulesAdapter, Severity, ToolAdapter, ValidationIssue, json_utils, read_rules_file, validate_all_syntax, write_rules_file};
 use crate::config::{McpConfig, McpServer};
 use crate::error::LorumError;
 
@@ -127,6 +127,67 @@ impl OpencodeAdapter {
 impl Default for OpencodeAdapter {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl ConfigValidator for OpencodeAdapter {
+    fn name(&self) -> &str {
+        "opencode"
+    }
+
+    fn validate_config(&self) -> Result<Vec<ValidationIssue>, LorumError> {
+        // 1. Run default syntax validation for all existing config files
+        let mut issues = validate_all_syntax(&self.config_paths());
+
+        // 2. Extra check: if both global and project-level configs exist,
+        //    detect server name conflicts
+        let global_path = Self::global_config_path();
+        let project_path = self.project_config_path();
+
+        let global_exists = global_path.as_ref().is_some_and(|p| p.exists());
+        let project_exists = project_path.as_ref().is_some_and(|p| p.exists());
+
+        if global_exists && project_exists {
+            let global_servers = if let Some(ref path) = global_path {
+                json_utils::read_existing_json(path)
+                    .ok()
+                    .and_then(|root| {
+                        root.get(MCP_FIELD)
+                            .and_then(|v| v.as_object())
+                            .map(|obj| obj.keys().cloned().collect::<std::collections::HashSet<String>>())
+                    })
+                    .unwrap_or_default()
+            } else {
+                std::collections::HashSet::new()
+            };
+
+            let project_servers = if let Some(ref path) = project_path {
+                json_utils::read_existing_json(path)
+                    .ok()
+                    .and_then(|root| {
+                        root.get(MCP_FIELD)
+                            .and_then(|v| v.as_object())
+                            .map(|obj| obj.keys().cloned().collect::<std::collections::HashSet<String>>())
+                    })
+                    .unwrap_or_default()
+            } else {
+                std::collections::HashSet::new()
+            };
+
+            for server_name in global_servers.intersection(&project_servers) {
+                issues.push(ValidationIssue {
+                    severity: Severity::Warning,
+                    message: format!(
+                        "MCP server '{}' is defined in both global and project-level opencode.json configs",
+                        server_name
+                    ),
+                    path: None,
+                    line: None,
+                });
+            }
+        }
+
+        Ok(issues)
     }
 }
 
@@ -452,7 +513,7 @@ mod tests {
     #[test]
     fn adapter_name() {
         let adapter = OpencodeAdapter::new();
-        assert_eq!(adapter.name(), "opencode");
+        assert_eq!(ToolAdapter::name(&adapter), "opencode");
     }
 
     #[test]

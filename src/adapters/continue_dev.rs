@@ -34,7 +34,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::adapters::{ToolAdapter, json_utils};
+use crate::adapters::{ConfigValidator, Severity, ToolAdapter, ValidationIssue, json_utils, validate_all_syntax};
 use crate::config::{McpConfig, McpServer};
 use crate::error::LorumError;
 
@@ -127,6 +127,47 @@ impl ContinueDevAdapter {
 impl Default for ContinueDevAdapter {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl ConfigValidator for ContinueDevAdapter {
+    fn name(&self) -> &str {
+        "continue"
+    }
+
+    fn validate_config(&self) -> Result<Vec<ValidationIssue>, LorumError> {
+        // 1. Run default syntax validation for all existing config files
+        let mut issues = validate_all_syntax(&self.config_paths());
+
+        // 2. Extra check: warn if both YAML and JSON config files exist
+        let yaml_paths: Vec<_> = [
+            self.project_yaml_path(),
+            Self::global_yaml_path(),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|p| p.exists())
+        .collect();
+
+        let json_paths: Vec<_> = [
+            self.project_json_path(),
+            Self::global_json_path(),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|p| p.exists())
+        .collect();
+
+        if !yaml_paths.is_empty() && !json_paths.is_empty() {
+            issues.push(ValidationIssue {
+                severity: Severity::Warning,
+                message: "both .continue/config.yaml and .continue/config.json exist; Continue.dev prefers YAML".into(),
+                path: None,
+                line: None,
+            });
+        }
+
+        Ok(issues)
     }
 }
 
@@ -712,7 +753,7 @@ mcpServers:
     #[test]
     fn adapter_name() {
         let adapter = ContinueDevAdapter::new();
-        assert_eq!(adapter.name(), "continue");
+        assert_eq!(ToolAdapter::name(&adapter), "continue");
     }
 
     #[test]
