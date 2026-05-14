@@ -142,6 +142,9 @@ impl HooksAdapter for CodexAdapter {
             "pre-tool-use" => Some("PreToolUse".into()),
             "post-tool-use" => Some("PostToolUse".into()),
             "session-end" => Some("Stop".into()),
+            "session-start" => Some("SessionStart".into()),
+            "permission-request" => Some("PermissionRequest".into()),
+            "user-prompt-submit" => Some("UserPromptSubmit".into()),
             _ => None,
         }
     }
@@ -151,6 +154,9 @@ impl HooksAdapter for CodexAdapter {
             "PreToolUse" => Some("pre-tool-use".into()),
             "PostToolUse" => Some("post-tool-use".into()),
             "Stop" => Some("session-end".into()),
+            "SessionStart" => Some("session-start".into()),
+            "PermissionRequest" => Some("permission-request".into()),
+            "UserPromptSubmit" => Some("user-prompt-submit".into()),
             _ => None,
         }
     }
@@ -241,6 +247,9 @@ fn codex_event_to_lorum(tool_event: &str) -> String {
         "PreToolUse" => "pre-tool-use".to_string(),
         "PostToolUse" => "post-tool-use".to_string(),
         "Stop" => "session-end".to_string(),
+        "SessionStart" => "session-start".to_string(),
+        "PermissionRequest" => "permission-request".to_string(),
+        "UserPromptSubmit" => "user-prompt-submit".to_string(),
         _ => pascal_to_kebab(tool_event),
     }
 }
@@ -254,6 +263,9 @@ fn lorum_event_to_codex(lorum_event: &str) -> String {
         "pre-tool-use" => "PreToolUse".to_string(),
         "post-tool-use" => "PostToolUse".to_string(),
         "session-end" => "Stop".to_string(),
+        "session-start" => "SessionStart".to_string(),
+        "permission-request" => "PermissionRequest".to_string(),
+        "user-prompt-submit" => "UserPromptSubmit".to_string(),
         _ => kebab_to_pascal(lorum_event),
     }
 }
@@ -274,6 +286,10 @@ fn parse_codex_hooks_from_json(value: Option<&serde_json::Value>) -> HooksConfig
             let Some(inner_hooks) = outer_item.get("hooks").and_then(|v| v.as_array()) else {
                 continue;
             };
+            let outer_matcher = outer_item
+                .get("matcher")
+                .and_then(|v| v.as_str())
+                .unwrap_or("*");
             for handler_value in inner_hooks {
                 let Some(handler_obj) = handler_value.as_object() else {
                     continue;
@@ -291,7 +307,7 @@ fn parse_codex_hooks_from_json(value: Option<&serde_json::Value>) -> HooksConfig
                     .and_then(|v| v.as_str())
                     .map(String::from);
                 handlers.push(HookHandler {
-                    matcher: "*".to_string(),
+                    matcher: outer_matcher.to_string(),
                     command: command.to_string(),
                     timeout,
                     handler_type,
@@ -519,7 +535,7 @@ KEY = "value"
     fn codex_hooks_event_mapping() {
         let adapter = CodexAdapter::new();
 
-        // lorum -> tool
+        // lorum -> tool (all 6 events)
         assert_eq!(
             adapter.lorum_to_tool_event("pre-tool-use"),
             Some("PreToolUse".into())
@@ -532,10 +548,21 @@ KEY = "value"
             adapter.lorum_to_tool_event("session-end"),
             Some("Stop".into())
         );
-        assert_eq!(adapter.lorum_to_tool_event("session-start"), None);
+        assert_eq!(
+            adapter.lorum_to_tool_event("session-start"),
+            Some("SessionStart".into())
+        );
+        assert_eq!(
+            adapter.lorum_to_tool_event("permission-request"),
+            Some("PermissionRequest".into())
+        );
+        assert_eq!(
+            adapter.lorum_to_tool_event("user-prompt-submit"),
+            Some("UserPromptSubmit".into())
+        );
         assert_eq!(adapter.lorum_to_tool_event("unknown-event"), None);
 
-        // tool -> lorum
+        // tool -> lorum (all 6 events)
         assert_eq!(
             adapter.tool_to_lorum_event("PreToolUse"),
             Some("pre-tool-use".into())
@@ -548,7 +575,18 @@ KEY = "value"
             adapter.tool_to_lorum_event("Stop"),
             Some("session-end".into())
         );
-        assert_eq!(adapter.tool_to_lorum_event("SessionStart"), None);
+        assert_eq!(
+            adapter.tool_to_lorum_event("SessionStart"),
+            Some("session-start".into())
+        );
+        assert_eq!(
+            adapter.tool_to_lorum_event("PermissionRequest"),
+            Some("permission-request".into())
+        );
+        assert_eq!(
+            adapter.tool_to_lorum_event("UserPromptSubmit"),
+            Some("user-prompt-submit".into())
+        );
         assert_eq!(adapter.tool_to_lorum_event("CustomEvent"), None);
     }
 
@@ -634,12 +672,10 @@ KEY = "value"
         let adapter = CodexAdapter::new();
 
         // lorum_to_tool_event returns None for unsupported events
-        assert_eq!(adapter.lorum_to_tool_event("session-start"), None);
         assert_eq!(adapter.lorum_to_tool_event("pre-read-file"), None);
         assert_eq!(adapter.lorum_to_tool_event("unknown-event"), None);
 
         // tool_to_lorum_event returns None for unsupported events
-        assert_eq!(adapter.tool_to_lorum_event("SessionStart"), None);
         assert_eq!(adapter.tool_to_lorum_event("CustomEvent"), None);
     }
 
@@ -731,5 +767,58 @@ KEY = "value"
             result["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
             "check.sh"
         );
+    }
+
+    #[test]
+    fn codex_hooks_reads_outer_matcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let codex_dir = dir.path().join(".codex");
+        fs::create_dir_all(&codex_dir).unwrap();
+        let path = codex_dir.join("hooks.json");
+
+        let json = serde_json::json!({
+            "hooks": {
+                "SessionStart": [
+                    {
+                        "matcher": "^startup$",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "echo start",
+                                "timeout": 10
+                            }
+                        ]
+                    }
+                ],
+                "PreToolUse": [
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "echo no-matcher"
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+        fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+
+        let adapter = CodexAdapter::with_project_root(dir.path().to_path_buf());
+        let config = adapter.read_hooks().unwrap();
+
+        assert_eq!(config.events.len(), 2);
+
+        let start_handlers = &config.events["session-start"];
+        assert_eq!(start_handlers.len(), 1);
+        assert_eq!(start_handlers[0].matcher, "^startup$");
+        assert_eq!(start_handlers[0].command, "echo start");
+        assert_eq!(start_handlers[0].timeout, Some(10));
+        assert_eq!(start_handlers[0].handler_type, Some("command".into()));
+
+        let pre_handlers = &config.events["pre-tool-use"];
+        assert_eq!(pre_handlers.len(), 1);
+        assert_eq!(pre_handlers[0].matcher, "*");
+        assert_eq!(pre_handlers[0].command, "echo no-matcher");
     }
 }
