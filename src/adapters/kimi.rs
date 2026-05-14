@@ -113,6 +113,14 @@ impl HooksAdapter for KimiAdapter {
 
         toml_utils::write_toml(&path, &root)
     }
+
+    fn lorum_to_tool_event(&self, lorum_event: &str) -> Option<String> {
+        Some(kebab_to_pascal(lorum_event))
+    }
+
+    fn tool_to_lorum_event(&self, tool_event: &str) -> Option<String> {
+        Some(pascal_to_kebab(tool_event))
+    }
 }
 
 impl ConfigValidator for KimiAdapter {

@@ -165,6 +165,14 @@ impl HooksAdapter for ClaudeAdapter {
         root["hooks"] = hooks_config_to_json_value(config);
         json_utils::write_json(&path, &root)
     }
+
+    fn lorum_to_tool_event(&self, lorum_event: &str) -> Option<String> {
+        Some(kebab_to_pascal(lorum_event))
+    }
+
+    fn tool_to_lorum_event(&self, tool_event: &str) -> Option<String> {
+        Some(pascal_to_kebab(tool_event))
+    }
 }
 
 impl ConfigValidator for ClaudeAdapter {

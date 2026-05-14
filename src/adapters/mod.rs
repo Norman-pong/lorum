@@ -377,6 +377,18 @@ pub trait HooksAdapter: Send + Sync {
     /// Returns [`LorumError::Io`] or [`LorumError::ConfigWrite`] if the
     /// configuration file cannot be written.
     fn write_hooks(&self, config: &HooksConfig) -> Result<(), LorumError>;
+
+    /// Convert a lorum unified event name (kebab-case) to this tool's
+    /// specific event name format.
+    ///
+    /// Returns `None` when the tool does not support the given event.
+    fn lorum_to_tool_event(&self, lorum_event: &str) -> Option<String>;
+
+    /// Convert this tool's event name format to a lorum unified event name
+    /// (kebab-case).
+    ///
+    /// Returns `None` when the event name is not recognised by lorum.
+    fn tool_to_lorum_event(&self, tool_event: &str) -> Option<String>;
 }
 
 static ALL_HOOKS_ADAPTERS: LazyLock<Vec<Box<dyn HooksAdapter>>> =
@@ -677,6 +689,60 @@ mod tests {
     #[test]
     fn find_hooks_adapter_returns_none_for_unknown() {
         assert!(find_hooks_adapter("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_hooks_event_mapping_claude() {
+        let adapter = claude::ClaudeAdapter;
+        // kebab-case -> PascalCase
+        assert_eq!(
+            adapter.lorum_to_tool_event("pre-tool-use"),
+            Some("PreToolUse".to_string())
+        );
+        assert_eq!(
+            adapter.lorum_to_tool_event("session-start"),
+            Some("SessionStart".to_string())
+        );
+        // PascalCase -> kebab-case
+        assert_eq!(
+            adapter.tool_to_lorum_event("PreToolUse"),
+            Some("pre-tool-use".to_string())
+        );
+        assert_eq!(
+            adapter.tool_to_lorum_event("SessionStart"),
+            Some("session-start".to_string())
+        );
+    }
+
+    #[test]
+    fn test_hooks_event_mapping_kimi() {
+        let adapter = kimi::KimiAdapter;
+        // kebab-case -> PascalCase
+        assert_eq!(
+            adapter.lorum_to_tool_event("post-tool-use"),
+            Some("PostToolUse".to_string())
+        );
+        // PascalCase -> kebab-case
+        assert_eq!(
+            adapter.tool_to_lorum_event("PostToolUse"),
+            Some("post-tool-use".to_string())
+        );
+    }
+
+    #[test]
+    fn test_hooks_event_mapping_roundtrip() {
+        let claude = claude::ClaudeAdapter;
+        let events = [
+            "pre-tool-use",
+            "post-tool-use",
+            "session-start",
+            "session-end",
+        ];
+        for event in &events {
+            let tool = claude.lorum_to_tool_event(event).unwrap();
+            let back = claude.tool_to_lorum_event(&tool).unwrap();
+            assert_eq!(back, *event, "roundtrip failed for {event}");
+        }
     }
 
     #[test]
