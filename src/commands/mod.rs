@@ -5,15 +5,14 @@
 
 use std::path::PathBuf;
 
-use crate::adapters::ValidationIssue;
 use crate::config;
 use crate::error::LorumError;
-use crate::sync::ConfigDiff;
 
 pub mod backup_cmds;
 pub mod doctor;
 pub use doctor::{
     ConsistencyReport, DoctorResult, print_consistency_reports, print_doctor_results, run_doctor,
+    run_doctor_consistency,
 };
 pub mod hook;
 #[cfg(test)]
@@ -384,17 +383,6 @@ fn print_sync_results(results: &[crate::sync::SyncResult]) -> usize {
         }
     }
     results.iter().filter(|r| !r.success).count()
-}
-
-/// Result of a structured configuration check for a single tool.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CheckResult {
-    /// Name of the tool that was checked.
-    pub tool: String,
-    /// Validation issues found for this tool.
-    pub issues: Vec<ValidationIssue>,
-    /// Config drift compared to the unified config, if applicable.
-    pub config_drift: Option<ConfigDiff>,
 }
 
 /// A single issue found during the self-check of the unified configuration.

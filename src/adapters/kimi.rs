@@ -122,7 +122,7 @@ impl ConfigValidator for KimiAdapter {
 
     fn validate_config(&self) -> Result<Vec<ValidationIssue>, LorumError> {
         // 1. Run default syntax validation (TOML)
-        let mut issues = validate_all_syntax(&ToolAdapter::config_paths(self));
+        let mut issues = validate_all_syntax(&<Self as ToolAdapter>::config_paths(self));
 
         // 2. Extra check: validate [mcp.client] field structure
         if let Some(ref path) = global_config_path() {

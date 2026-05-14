@@ -872,4 +872,23 @@ mod tests {
     fn test_find_config_validator_returns_none_for_unknown() {
         assert!(find_config_validator("nonexistent-tool").is_none());
     }
+
+    #[test]
+    fn test_all_adapters_and_validators_are_consistent() {
+        // Ensure that every adapter has a corresponding validator and vice versa.
+        let adapters = all_adapters();
+        let validators = all_config_validators();
+        assert_eq!(
+            adapters.len(),
+            validators.len(),
+            "ALL_ADAPTERS and ALL_CONFIG_VALIDATORS must have the same length"
+        );
+        for adapter in adapters {
+            assert!(
+                find_config_validator(adapter.name()).is_some(),
+                "adapter '{}' has no corresponding config validator",
+                adapter.name()
+            );
+        }
+    }
 }

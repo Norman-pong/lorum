@@ -384,6 +384,8 @@ impl Cli {
             Some(Commands::Doctor { tools }) => {
                 let results = commands::run_doctor(&tools)?;
                 commands::print_doctor_results(&results);
+                let consistency = commands::run_doctor_consistency(&tools)?;
+                commands::print_consistency_reports(&consistency);
                 Ok(())
             }
             Some(Commands::Config {
