@@ -375,4 +375,140 @@ mod tests {
         let err = result.unwrap_err().to_string();
         assert!(err.contains("nonexistent-tool-xyz"));
     }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_consistency_reports_consistent_when_synced() {
+        let dir = tempfile::tempdir().unwrap();
+        let original_home = std::env::var_os("HOME");
+        let original_xdg = std::env::var_os("XDG_CONFIG_HOME");
+        let original_cwd = std::env::current_dir().unwrap();
+
+        let result = std::panic::catch_unwind(|| {
+            // Set HOME to temp dir so global config resolves to temp/.config/lorum/config.yaml
+            unsafe {
+                std::env::set_var("HOME", dir.path());
+            }
+            // Clear XDG_CONFIG_HOME so HOME is used
+            unsafe {
+                std::env::remove_var("XDG_CONFIG_HOME");
+            }
+
+            // Create empty global lorum config
+            let lorum_dir = dir.path().join(".config").join("lorum");
+            std::fs::create_dir_all(&lorum_dir).unwrap();
+            std::fs::write(lorum_dir.join("config.yaml"), "mcp:\n  servers: {}\n").unwrap();
+
+            // Change cwd to a subdir (no .lorum/config.yaml, no .cursor/mcp.json)
+            let cwd_dir = dir.path().join("workspace");
+            std::fs::create_dir_all(&cwd_dir).unwrap();
+            std::env::set_current_dir(&cwd_dir).unwrap();
+
+            let reports = run_doctor_consistency(&["cursor".into()]).unwrap();
+            assert_eq!(reports.len(), 1);
+            let report = &reports[0];
+            assert_eq!(report.tool, "cursor");
+            assert!(
+                report.consistent,
+                "expected consistent when both configs are empty"
+            );
+            assert!(report.error.is_none());
+            let diff = report.diff.as_ref().expect("diff should be present");
+            assert!(diff.added.is_empty(), "expected no added servers");
+            assert!(diff.removed.is_empty(), "expected no removed servers");
+            assert!(diff.modified.is_empty(), "expected no modified servers");
+        });
+
+        // Restore environment
+        unsafe {
+            match original_home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+        match original_xdg {
+            Some(v) => unsafe { std::env::set_var("XDG_CONFIG_HOME", v) },
+            None => unsafe { std::env::remove_var("XDG_CONFIG_HOME") },
+        }
+        std::env::set_current_dir(original_cwd).unwrap();
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_consistency_detects_drift() {
+        let dir = tempfile::tempdir().unwrap();
+        let original_home = std::env::var_os("HOME");
+        let original_xdg = std::env::var_os("XDG_CONFIG_HOME");
+        let original_cwd = std::env::current_dir().unwrap();
+
+        let result = std::panic::catch_unwind(|| {
+            // Set HOME to temp dir so global config resolves to temp/.config/lorum/config.yaml
+            unsafe {
+                std::env::set_var("HOME", dir.path());
+            }
+            // Clear XDG_CONFIG_HOME so HOME is used
+            unsafe {
+                std::env::remove_var("XDG_CONFIG_HOME");
+            }
+
+            // Create global lorum config with test-srv
+            let lorum_dir = dir.path().join(".config").join("lorum");
+            std::fs::create_dir_all(&lorum_dir).unwrap();
+            std::fs::write(
+                lorum_dir.join("config.yaml"),
+                "mcp:\n  servers:\n    test-srv:\n      command: echo\n      args: []\n      env: {}\n",
+            )
+            .unwrap();
+
+            // Change cwd to a subdir
+            let cwd_dir = dir.path().join("workspace");
+            std::fs::create_dir_all(&cwd_dir).unwrap();
+            std::env::set_current_dir(&cwd_dir).unwrap();
+
+            // Create cursor config with a different server
+            let cursor_dir = cwd_dir.join(".cursor");
+            std::fs::create_dir_all(&cursor_dir).unwrap();
+            std::fs::write(
+                cursor_dir.join("mcp.json"),
+                r#"{"mcpServers":{"other-srv":{"command":"node","args":["server.js"]}}}"#,
+            )
+            .unwrap();
+
+            let reports = run_doctor_consistency(&["cursor".into()]).unwrap();
+            assert_eq!(reports.len(), 1);
+            let report = &reports[0];
+            assert_eq!(report.tool, "cursor");
+            assert!(!report.consistent, "expected drift to be detected");
+            assert!(report.error.is_none());
+            let diff = report.diff.as_ref().expect("diff should be present");
+            assert_eq!(
+                diff.added,
+                vec!["test-srv"],
+                "expected test-srv to be added"
+            );
+            assert_eq!(
+                diff.removed,
+                vec!["other-srv"],
+                "expected other-srv to be removed"
+            );
+            assert!(diff.modified.is_empty(), "expected no modified servers");
+        });
+
+        // Restore environment
+        unsafe {
+            match original_home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+        match original_xdg {
+            Some(v) => unsafe { std::env::set_var("XDG_CONFIG_HOME", v) },
+            None => unsafe { std::env::remove_var("XDG_CONFIG_HOME") },
+        }
+        std::env::set_current_dir(original_cwd).unwrap();
+
+        assert!(result.is_ok());
+    }
 }
