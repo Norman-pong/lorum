@@ -14,6 +14,180 @@ use crate::config::{HooksConfig, McpConfig};
 use crate::error::LorumError;
 use crate::skills::SkillEntry;
 
+// ---------------------------------------------------------------------------
+// Config validation
+// ---------------------------------------------------------------------------
+
+/// Severity level of a configuration validation issue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    /// A critical issue that prevents the configuration from being usable.
+    Error,
+    /// A non-critical issue that should be addressed but does not block usage.
+    Warning,
+}
+
+/// A single issue discovered during configuration validation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ValidationIssue {
+    /// Severity of the issue.
+    pub severity: Severity,
+    /// Human-readable description of the issue.
+    pub message: String,
+    /// Path to the file where the issue was found, if applicable.
+    pub path: Option<PathBuf>,
+    /// Line number where the issue was found, if applicable.
+    pub line: Option<usize>,
+}
+
+/// Trait for validating tool configuration files.
+///
+/// Implementors can check configuration files for syntax errors,
+/// structural problems, or other issues.
+pub trait ConfigValidator: Send + Sync {
+    /// Human-readable name of the tool (e.g. "claude-code").
+    fn name(&self) -> &str;
+
+    /// Validate all configuration files for this tool.
+    ///
+    /// Returns a list of issues found. An empty vector means no issues.
+    fn validate_config(&self) -> Result<Vec<ValidationIssue>, LorumError>;
+}
+
+/// Validate syntax for a single configuration file based on its extension.
+///
+/// Checks that the file exists, is not a directory, is not empty, and that
+/// its contents are valid JSON, TOML, or YAML depending on the extension.
+/// Returns a list of issues found (empty if no issues).
+pub fn validate_syntax(path: &Path) -> Vec<ValidationIssue> {
+    let mut issues = Vec::new();
+
+    if !path.exists() {
+        return issues;
+    }
+
+    // Check if path is a directory
+    if path.is_dir() {
+        issues.push(ValidationIssue {
+            severity: Severity::Error,
+            message: "expected file, found directory".into(),
+            path: Some(path.to_path_buf()),
+            line: None,
+        });
+        return issues;
+    }
+
+    // Get metadata to check file size
+    let metadata = match std::fs::metadata(path) {
+        Ok(m) => m,
+        Err(e) => {
+            issues.push(ValidationIssue {
+                severity: Severity::Error,
+                message: format!("failed to read metadata: {e}"),
+                path: Some(path.to_path_buf()),
+                line: None,
+            });
+            return issues;
+        }
+    };
+
+    if metadata.len() == 0 {
+        issues.push(ValidationIssue {
+            severity: Severity::Warning,
+            message: "file is empty".into(),
+            path: Some(path.to_path_buf()),
+            line: None,
+        });
+        return issues;
+    }
+
+    // Read file content
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            issues.push(ValidationIssue {
+                severity: Severity::Error,
+                message: format!("failed to read file: {e}"),
+                path: Some(path.to_path_buf()),
+                line: None,
+            });
+            return issues;
+        }
+    };
+
+    // Validate based on extension
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    match ext.as_str() {
+        "json" => {
+            if let Err(e) = serde_json::from_str::<serde_json::Value>(&content) {
+                issues.push(ValidationIssue {
+                    severity: Severity::Error,
+                    message: format!("invalid JSON: {e}"),
+                    path: Some(path.to_path_buf()),
+                    line: None,
+                });
+            }
+        }
+        "toml" => {
+            if let Err(e) = toml::from_str::<toml::Value>(&content) {
+                issues.push(ValidationIssue {
+                    severity: Severity::Error,
+                    message: format!("invalid TOML: {e}"),
+                    path: Some(path.to_path_buf()),
+                    line: None,
+                });
+            }
+        }
+        "yaml" | "yml" => {
+            if let Err(e) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+                issues.push(ValidationIssue {
+                    severity: Severity::Error,
+                    message: format!("invalid YAML: {e}"),
+                    path: Some(path.to_path_buf()),
+                    line: None,
+                });
+            }
+        }
+        _ => {
+            issues.push(ValidationIssue {
+                severity: Severity::Warning,
+                message: format!("unknown file extension '{ext}', skipping syntax validation"),
+                path: Some(path.to_path_buf()),
+                line: None,
+            });
+        }
+    }
+
+    issues
+}
+
+/// Validate syntax for all configuration files returned by `config_paths`.
+///
+/// This is a convenience wrapper around [`validate_syntax`] that iterates
+/// over all paths and aggregates issues.
+pub fn validate_all_syntax(config_paths: &[PathBuf]) -> Vec<ValidationIssue> {
+    let mut issues = Vec::new();
+    for path in config_paths {
+        issues.extend(validate_syntax(path));
+    }
+    issues
+}
+
+/// Default implementation helper for `ConfigValidator`.
+///
+/// Adapters that do not need custom validation logic can call this
+/// function from their `validate_config` implementation to perform
+/// standard syntax validation on all config files.
+pub fn default_validate_config(adapter: &dyn ToolAdapter) -> Result<Vec<ValidationIssue>, LorumError> {
+    let paths: Vec<PathBuf> = adapter.config_paths();
+    Ok(validate_all_syntax(&paths))
+}
+
 pub mod claude;
 pub mod codex;
 pub mod continue_dev;
@@ -277,6 +451,37 @@ pub fn find_skills_adapter(name: &str) -> Option<&'static dyn SkillsAdapter> {
         .map(|a| a.as_ref())
 }
 
+/// All registered config validators, derived from the MCP adapters.
+///
+/// Each [`ToolAdapter`] also implements [`ConfigValidator`] via the blanket
+/// implementation, so this list contains a validator for every MCP adapter.
+static ALL_CONFIG_VALIDATORS: LazyLock<Vec<Box<dyn ConfigValidator>>> = LazyLock::new(|| {
+    vec![
+        Box::new(claude::ClaudeAdapter) as Box<dyn ConfigValidator>,
+        Box::new(codex::CodexAdapter) as Box<dyn ConfigValidator>,
+        Box::new(continue_dev::ContinueDevAdapter::new()) as Box<dyn ConfigValidator>,
+        Box::new(cursor::CursorAdapter::new()) as Box<dyn ConfigValidator>,
+        Box::new(proma::PromaAdapter) as Box<dyn ConfigValidator>,
+        Box::new(kimi::KimiAdapter) as Box<dyn ConfigValidator>,
+        Box::new(opencode::OpencodeAdapter::new()) as Box<dyn ConfigValidator>,
+        Box::new(trae::TraeAdapter::new()) as Box<dyn ConfigValidator>,
+        Box::new(windsurf::WindsurfAdapter) as Box<dyn ConfigValidator>,
+    ]
+});
+
+/// Return all registered config validators.
+pub fn all_config_validators() -> &'static [Box<dyn ConfigValidator>] {
+    &ALL_CONFIG_VALIDATORS
+}
+
+/// Find a config validator by name.
+pub fn find_config_validator(name: &str) -> Option<&'static dyn ConfigValidator> {
+    ALL_CONFIG_VALIDATORS
+        .iter()
+        .find(|v| v.name() == name)
+        .map(|v| v.as_ref())
+}
+
 /// Return the union of all tool names registered across all four adapter dimensions.
 ///
 /// Each tool name appears at most once in the returned vector.
@@ -521,5 +726,124 @@ mod tests {
         assert!(path.exists());
         let content = fs::read_to_string(&path).unwrap();
         assert_eq!(content, "# New Rules\n");
+    }
+
+    // ---- ConfigValidator blanket impl via validate_syntax ------------------
+
+    #[test]
+    fn test_config_validator_blanket_impl_valid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        fs::write(&path, r#"{"key": "value"}"#).unwrap();
+        let issues = validate_syntax(&path);
+        assert!(issues.is_empty(), "expected no issues for valid JSON, got: {:?}", issues);
+    }
+
+    #[test]
+    fn test_config_validator_blanket_impl_valid_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "key = \"value\"\n").unwrap();
+        let issues = validate_syntax(&path);
+        assert!(issues.is_empty(), "expected no issues for valid TOML, got: {:?}", issues);
+    }
+
+    #[test]
+    fn test_config_validator_blanket_impl_valid_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        fs::write(&path, "key: value\n").unwrap();
+        let issues = validate_syntax(&path);
+        assert!(issues.is_empty(), "expected no issues for valid YAML, got: {:?}", issues);
+    }
+
+    #[test]
+    fn test_config_validator_blanket_impl_broken_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        fs::write(&path, r#"{"key": "value" "missing": "comma"}"#).unwrap();
+        let issues = validate_syntax(&path);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, Severity::Error);
+        assert!(issues[0].message.contains("invalid JSON"));
+    }
+
+    #[test]
+    fn test_config_validator_blanket_impl_broken_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "key = \n").unwrap();
+        let issues = validate_syntax(&path);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, Severity::Error);
+        assert!(issues[0].message.contains("invalid TOML"));
+    }
+
+    #[test]
+    fn test_config_validator_blanket_impl_broken_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        fs::write(&path, "key: [unclosed").unwrap();
+        let issues = validate_syntax(&path);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, Severity::Error);
+        assert!(issues[0].message.contains("invalid YAML"));
+    }
+
+    #[test]
+    fn test_config_validator_blanket_impl_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        fs::write(&path, "").unwrap();
+        let issues = validate_syntax(&path);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, Severity::Warning);
+        assert!(issues[0].message.contains("empty"));
+    }
+
+    #[test]
+    fn test_config_validator_blanket_impl_directory_not_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let subdir = dir.path().join("config.json");
+        fs::create_dir(&subdir).unwrap();
+        let issues = validate_syntax(&subdir);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, Severity::Error);
+        assert!(issues[0].message.contains("directory"));
+    }
+
+    #[test]
+    fn test_config_validator_blanket_impl_unknown_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.txt");
+        fs::write(&path, "some text").unwrap();
+        let issues = validate_syntax(&path);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, Severity::Warning);
+        assert!(issues[0].message.contains("unknown file extension"));
+    }
+
+    #[test]
+    fn test_all_config_validators_returns_expected_count() {
+        let validators = all_config_validators();
+        assert_eq!(validators.len(), 9);
+    }
+
+    #[test]
+    fn test_find_config_validator_finds_known() {
+        assert_eq!(find_config_validator("claude-code").unwrap().name(), "claude-code");
+        assert_eq!(find_config_validator("codex").unwrap().name(), "codex");
+        assert_eq!(find_config_validator("continue").unwrap().name(), "continue");
+        assert_eq!(find_config_validator("cursor").unwrap().name(), "cursor");
+        assert_eq!(find_config_validator("proma").unwrap().name(), "proma");
+        assert_eq!(find_config_validator("kimi").unwrap().name(), "kimi");
+        assert_eq!(find_config_validator("opencode").unwrap().name(), "opencode");
+        assert_eq!(find_config_validator("trae").unwrap().name(), "trae");
+        assert_eq!(find_config_validator("windsurf").unwrap().name(), "windsurf");
+    }
+
+    #[test]
+    fn test_find_config_validator_returns_none_for_unknown() {
+        assert!(find_config_validator("nonexistent-tool").is_none());
     }
 }
