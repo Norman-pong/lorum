@@ -30,7 +30,6 @@
 //! }
 //! ```
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::adapters::{
@@ -38,7 +37,7 @@ use crate::adapters::{
     default_validate_config, json_utils, kebab_to_pascal, pascal_to_kebab, read_rules_file,
     write_rules_file,
 };
-use crate::config::{HookHandler, HooksConfig, McpConfig};
+use crate::config::{HooksConfig, McpConfig};
 use crate::error::LorumError;
 use crate::skills::{SkillEntry, copy_dir_recursive, scan_skills_dir};
 
@@ -221,81 +220,14 @@ impl ToolAdapter for ClaudeAdapter {
     }
 }
 
-/// Parse hooks from a JSON value.
+/// Parse hooks from a JSON value (Claude uses `"match"` as the matcher key).
 fn parse_hooks_from_json(value: Option<&serde_json::Value>) -> HooksConfig {
-    let Some(obj) = value.and_then(|v| v.as_object()) else {
-        return HooksConfig::default();
-    };
-    let mut events = BTreeMap::new();
-    for (pascal_event, handlers_value) in obj {
-        let kebab_event = pascal_to_kebab(pascal_event);
-        let Some(handlers_array) = handlers_value.as_array() else {
-            continue;
-        };
-        let mut handlers = Vec::new();
-        for handler_value in handlers_array {
-            let Some(handler_obj) = handler_value.as_object() else {
-                continue;
-            };
-            let Some(matcher) = handler_obj
-                .get("match")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-            else {
-                continue;
-            };
-            let Some(command) = handler_obj
-                .get("command")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-            else {
-                continue;
-            };
-            let timeout = handler_obj.get("timeout").and_then(|v| v.as_u64());
-            let handler_type = handler_obj
-                .get("type")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            handlers.push(HookHandler {
-                matcher: matcher.to_string(),
-                command: command.to_string(),
-                timeout,
-                handler_type,
-            });
-        }
-        if !handlers.is_empty() {
-            events.insert(kebab_event, handlers);
-        }
-    }
-    HooksConfig { events }
+    json_utils::parse_hooks_from_json_value(value, pascal_to_kebab, "match")
 }
 
-/// Convert a HooksConfig to a JSON value.
+/// Convert a HooksConfig to a JSON value (Claude uses `"match"` as the matcher key).
 fn hooks_config_to_json_value(config: &HooksConfig) -> serde_json::Value {
-    let mut map = serde_json::Map::new();
-    for (event_name, handlers) in &config.events {
-        let pascal_event = kebab_to_pascal(event_name);
-        let handlers_array: Vec<serde_json::Value> = handlers
-            .iter()
-            .map(|h| {
-                let mut obj = serde_json::Map::new();
-                obj.insert("match".into(), serde_json::Value::String(h.matcher.clone()));
-                obj.insert(
-                    "command".into(),
-                    serde_json::Value::String(h.command.clone()),
-                );
-                if let Some(t) = h.timeout {
-                    obj.insert("timeout".into(), serde_json::Value::Number(t.into()));
-                }
-                if let Some(ref ty) = h.handler_type {
-                    obj.insert("type".into(), serde_json::Value::String(ty.clone()));
-                }
-                serde_json::Value::Object(obj)
-            })
-            .collect();
-        map.insert(pascal_event, serde_json::Value::Array(handlers_array));
-    }
-    serde_json::Value::Object(map)
+    json_utils::hooks_config_to_json_value(config, kebab_to_pascal, "match")
 }
 
 #[cfg(test)]
@@ -352,6 +284,7 @@ mod claude_rules_tests {
 mod tests {
     use super::*;
     use crate::adapters::test_utils::make_server;
+    use crate::config::HookHandler;
     use std::collections::BTreeMap;
     use std::fs;
 
