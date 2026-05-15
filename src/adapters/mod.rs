@@ -455,7 +455,11 @@ pub trait SkillsAdapter: Send + Sync {
 static ALL_SKILLS_ADAPTERS: LazyLock<Vec<Box<dyn SkillsAdapter>>> = LazyLock::new(|| {
     vec![
         Box::new(claude::ClaudeSkillsAdapter),
+        Box::new(cursor::CursorSkillsAdapter),
+        Box::new(opencode::OpenCodeSkillsAdapter),
         Box::new(proma::PromaSkillsAdapter),
+        Box::new(trae::TraeSkillsAdapter),
+        Box::new(windsurf::WindsurfSkillsAdapter),
     ]
 });
 
@@ -826,12 +830,16 @@ mod tests {
     }
 
     #[test]
-    fn all_skills_adapters_returns_two() {
+    fn all_skills_adapters_returns_six() {
         let adapters = all_skills_adapters();
-        assert_eq!(adapters.len(), 2);
+        assert_eq!(adapters.len(), 6);
         let names: Vec<_> = adapters.iter().map(|a| a.name()).collect();
         assert!(names.contains(&"claude-code"));
+        assert!(names.contains(&"cursor"));
+        assert!(names.contains(&"opencode"));
         assert!(names.contains(&"proma"));
+        assert!(names.contains(&"trae"));
+        assert!(names.contains(&"windsurf"));
     }
 
     #[test]
@@ -840,7 +848,11 @@ mod tests {
             find_skills_adapter("claude-code").unwrap().name(),
             "claude-code"
         );
+        assert_eq!(find_skills_adapter("cursor").unwrap().name(), "cursor");
+        assert_eq!(find_skills_adapter("opencode").unwrap().name(), "opencode");
         assert_eq!(find_skills_adapter("proma").unwrap().name(), "proma");
+        assert_eq!(find_skills_adapter("trae").unwrap().name(), "trae");
+        assert_eq!(find_skills_adapter("windsurf").unwrap().name(), "windsurf");
     }
 
     #[test]

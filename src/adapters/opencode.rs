@@ -31,17 +31,66 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::adapters::{
-    ConfigValidator, RulesAdapter, Severity, ToolAdapter, ValidationIssue, json_utils,
-    read_rules_file, validate_all_syntax, write_rules_file,
+    ConfigValidator, RulesAdapter, Severity, SkillsAdapter, ToolAdapter, ValidationIssue,
+    json_utils, read_rules_file, validate_all_syntax, write_rules_file,
 };
 use crate::config::{McpConfig, McpServer};
 use crate::error::LorumError;
+use crate::skills::{SkillEntry, copy_dir_recursive, scan_skills_dir};
 
 /// Adapter for Opencode.
 ///
 /// Reads and writes MCP server configurations from Opencode's
 /// `~/.config/opencode/opencode.json` (global, priority) or
 /// project-level `opencode.json` (fallback), preserving any non-MCP fields.
+/// Adapter for OpenCode skills.
+///
+/// Reads and writes skills from OpenCode's `~/.config/opencode/skills/` directory.
+pub struct OpenCodeSkillsAdapter;
+
+impl SkillsAdapter for OpenCodeSkillsAdapter {
+    fn name(&self) -> &str {
+        "opencode"
+    }
+
+    fn skills_base_dir(&self) -> Option<PathBuf> {
+        dirs::home_dir().map(|h| h.join(".config").join("opencode").join("skills"))
+    }
+
+    fn read_skills(&self) -> Result<Vec<SkillEntry>, LorumError> {
+        let Some(dir) = self.skills_base_dir() else {
+            return Ok(Vec::new());
+        };
+        scan_skills_dir(&dir)
+    }
+
+    fn write_skill(&self, name: &str, source_dir: &Path) -> Result<(), LorumError> {
+        let dir = self.skills_base_dir().ok_or_else(|| LorumError::Other {
+            message: "cannot determine home directory".into(),
+        })?;
+        let target = dir.join(name);
+        if target.exists() {
+            let old = dir.join(format!(".old-{name}"));
+            if old.exists() {
+                std::fs::remove_dir_all(&old)?;
+            }
+            std::fs::rename(&target, &old)?;
+        }
+        copy_dir_recursive(source_dir, &target)
+    }
+
+    fn remove_skill(&self, name: &str) -> Result<(), LorumError> {
+        let dir = self.skills_base_dir().ok_or_else(|| LorumError::Other {
+            message: "cannot determine home directory".into(),
+        })?;
+        let target = dir.join(name);
+        if target.exists() {
+            std::fs::remove_dir_all(target)?;
+        }
+        Ok(())
+    }
+}
+
 /// Adapter for OpenCode rules.
 ///
 /// Reads and writes rules content from OpenCode's `AGENTS.md`
@@ -539,5 +588,52 @@ mod tests {
         let paths = adapter.config_paths();
         assert_eq!(paths.len(), 2);
         assert_eq!(paths[1], dir.path().join("opencode.json"));
+    }
+}
+
+#[cfg(test)]
+mod skills_tests {
+    use super::*;
+
+    #[test]
+    fn read_skills_empty_when_no_dir() {
+        let adapter = OpenCodeSkillsAdapter;
+        let skills = adapter.read_skills().unwrap();
+        assert!(skills.is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn write_skill_copies_directory_contents() {
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", home.path()) };
+        let src = tempfile::tempdir().unwrap();
+        std::fs::write(
+            src.path().join("SKILL.md"),
+            "---\nname: test-skill\ndescription: \"Test\"\n---\n",
+        )
+        .unwrap();
+
+        let adapter = OpenCodeSkillsAdapter;
+        adapter.write_skill("test-skill", src.path()).unwrap();
+        let skills = adapter.read_skills().unwrap();
+        assert!(skills.iter().any(|s| s.manifest.name == "test-skill"));
+        adapter.remove_skill("test-skill").unwrap();
+        unsafe { std::env::remove_var("HOME") };
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn remove_skill_deletes_directory() {
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", home.path()) };
+        let adapter = OpenCodeSkillsAdapter;
+        adapter
+            .write_skill("test-skill", tempfile::tempdir().unwrap().path())
+            .unwrap();
+        adapter.remove_skill("test-skill").unwrap();
+        let skills = adapter.read_skills().unwrap();
+        assert!(!skills.iter().any(|s| s.manifest.name == "test-skill"));
+        unsafe { std::env::remove_var("HOME") };
     }
 }

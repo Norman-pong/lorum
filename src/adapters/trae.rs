@@ -18,11 +18,60 @@
 use std::path::{Path, PathBuf};
 
 use crate::adapters::{
-    ConfigValidator, RulesAdapter, ToolAdapter, ValidationIssue, default_validate_config,
-    json_utils, read_rules_file, write_rules_file,
+    ConfigValidator, RulesAdapter, SkillsAdapter, ToolAdapter, ValidationIssue,
+    default_validate_config, json_utils, read_rules_file, write_rules_file,
 };
 use crate::config::McpConfig;
 use crate::error::LorumError;
+use crate::skills::{SkillEntry, copy_dir_recursive, scan_skills_dir};
+
+/// Adapter for Trae skills.
+///
+/// Reads and writes skills from Trae's `~/.trae/skills/` directory.
+pub struct TraeSkillsAdapter;
+
+impl SkillsAdapter for TraeSkillsAdapter {
+    fn name(&self) -> &str {
+        "trae"
+    }
+
+    fn skills_base_dir(&self) -> Option<PathBuf> {
+        dirs::home_dir().map(|h| h.join(".trae").join("skills"))
+    }
+
+    fn read_skills(&self) -> Result<Vec<SkillEntry>, LorumError> {
+        let Some(dir) = self.skills_base_dir() else {
+            return Ok(Vec::new());
+        };
+        scan_skills_dir(&dir)
+    }
+
+    fn write_skill(&self, name: &str, source_dir: &Path) -> Result<(), LorumError> {
+        let dir = self.skills_base_dir().ok_or_else(|| LorumError::Other {
+            message: "cannot determine home directory".into(),
+        })?;
+        let target = dir.join(name);
+        if target.exists() {
+            let old = dir.join(format!(".old-{name}"));
+            if old.exists() {
+                std::fs::remove_dir_all(&old)?;
+            }
+            std::fs::rename(&target, &old)?;
+        }
+        copy_dir_recursive(source_dir, &target)
+    }
+
+    fn remove_skill(&self, name: &str) -> Result<(), LorumError> {
+        let dir = self.skills_base_dir().ok_or_else(|| LorumError::Other {
+            message: "cannot determine home directory".into(),
+        })?;
+        let target = dir.join(name);
+        if target.exists() {
+            std::fs::remove_dir_all(target)?;
+        }
+        Ok(())
+    }
+}
 
 /// Adapter for Trae.
 ///
@@ -312,5 +361,56 @@ mod tests {
         let paths = adapter.config_paths();
         assert_eq!(paths.len(), 1);
         assert_eq!(paths[0], dir.path().join(".trae").join("mcp.json"));
+    }
+}
+
+#[cfg(test)]
+mod skills_tests {
+    use super::*;
+
+    #[test]
+    #[serial_test::serial]
+    fn read_skills_empty_when_no_dir() {
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", home.path()) };
+        let adapter = TraeSkillsAdapter;
+        let skills = adapter.read_skills().unwrap();
+        assert!(skills.is_empty());
+        unsafe { std::env::remove_var("HOME") };
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn write_skill_copies_directory_contents() {
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", home.path()) };
+        let src = tempfile::tempdir().unwrap();
+        std::fs::write(
+            src.path().join("SKILL.md"),
+            "---\nname: test-skill\ndescription: \"Test\"\n---\n",
+        )
+        .unwrap();
+
+        let adapter = TraeSkillsAdapter;
+        adapter.write_skill("test-skill", src.path()).unwrap();
+        let skills = adapter.read_skills().unwrap();
+        assert!(skills.iter().any(|s| s.manifest.name == "test-skill"));
+        adapter.remove_skill("test-skill").unwrap();
+        unsafe { std::env::remove_var("HOME") };
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn remove_skill_deletes_directory() {
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", home.path()) };
+        let adapter = TraeSkillsAdapter;
+        adapter
+            .write_skill("test-skill", tempfile::tempdir().unwrap().path())
+            .unwrap();
+        adapter.remove_skill("test-skill").unwrap();
+        let skills = adapter.read_skills().unwrap();
+        assert!(!skills.iter().any(|s| s.manifest.name == "test-skill"));
+        unsafe { std::env::remove_var("HOME") };
     }
 }

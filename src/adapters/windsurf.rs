@@ -27,11 +27,12 @@
 use std::path::{Path, PathBuf};
 
 use crate::adapters::{
-    ConfigValidator, HooksAdapter, RulesAdapter, ToolAdapter, ValidationIssue,
+    ConfigValidator, HooksAdapter, RulesAdapter, SkillsAdapter, ToolAdapter, ValidationIssue,
     default_validate_config, json_utils, read_rules_file, write_rules_file,
 };
 use crate::config::{HooksConfig, McpConfig};
 use crate::error::LorumError;
+use crate::skills::{SkillEntry, copy_dir_recursive, scan_skills_dir};
 
 /// Adapter for Windsurf rules.
 ///
@@ -74,6 +75,54 @@ pub struct WindsurfAdapter {
 
 /// Field name used by Windsurf for MCP servers.
 const MCP_FIELD: &str = "mcpServers";
+
+/// Adapter for Windsurf skills.
+///
+/// Reads and writes skills from Windsurf's `~/.codeium/windsurf/skills/` directory.
+pub struct WindsurfSkillsAdapter;
+
+impl SkillsAdapter for WindsurfSkillsAdapter {
+    fn name(&self) -> &str {
+        "windsurf"
+    }
+
+    fn skills_base_dir(&self) -> Option<PathBuf> {
+        dirs::home_dir().map(|h| h.join(".codeium").join("windsurf").join("skills"))
+    }
+
+    fn read_skills(&self) -> Result<Vec<SkillEntry>, LorumError> {
+        let Some(dir) = self.skills_base_dir() else {
+            return Ok(Vec::new());
+        };
+        scan_skills_dir(&dir)
+    }
+
+    fn write_skill(&self, name: &str, source_dir: &Path) -> Result<(), LorumError> {
+        let dir = self.skills_base_dir().ok_or_else(|| LorumError::Other {
+            message: "cannot determine home directory".into(),
+        })?;
+        let target = dir.join(name);
+        if target.exists() {
+            let old = dir.join(format!(".old-{name}"));
+            if old.exists() {
+                std::fs::remove_dir_all(&old)?;
+            }
+            std::fs::rename(&target, &old)?;
+        }
+        copy_dir_recursive(source_dir, &target)
+    }
+
+    fn remove_skill(&self, name: &str) -> Result<(), LorumError> {
+        let dir = self.skills_base_dir().ok_or_else(|| LorumError::Other {
+            message: "cannot determine home directory".into(),
+        })?;
+        let target = dir.join(name);
+        if target.exists() {
+            std::fs::remove_dir_all(target)?;
+        }
+        Ok(())
+    }
+}
 
 /// Returns the global Windsurf config path: `~/.codeium/windsurf/mcp_config.json`.
 fn global_config_path() -> Option<PathBuf> {
@@ -824,5 +873,52 @@ mod tests {
         let config = adapter.read_hooks().unwrap();
         assert_eq!(config.events.len(), 1);
         assert_eq!(config.events["pre-tool-use"][0].command, "user-level.sh");
+    }
+}
+
+#[cfg(test)]
+mod skills_tests {
+    use super::*;
+
+    #[test]
+    fn read_skills_empty_when_no_dir() {
+        let adapter = WindsurfSkillsAdapter;
+        let skills = adapter.read_skills().unwrap();
+        assert!(skills.is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn write_skill_copies_directory_contents() {
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", home.path()) };
+        let src = tempfile::tempdir().unwrap();
+        std::fs::write(
+            src.path().join("SKILL.md"),
+            "---\nname: test-skill\ndescription: \"Test\"\n---\n",
+        )
+        .unwrap();
+
+        let adapter = WindsurfSkillsAdapter;
+        adapter.write_skill("test-skill", src.path()).unwrap();
+        let skills = adapter.read_skills().unwrap();
+        assert!(skills.iter().any(|s| s.manifest.name == "test-skill"));
+        adapter.remove_skill("test-skill").unwrap();
+        unsafe { std::env::remove_var("HOME") };
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn remove_skill_deletes_directory() {
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", home.path()) };
+        let adapter = WindsurfSkillsAdapter;
+        adapter
+            .write_skill("test-skill", tempfile::tempdir().unwrap().path())
+            .unwrap();
+        adapter.remove_skill("test-skill").unwrap();
+        let skills = adapter.read_skills().unwrap();
+        assert!(!skills.iter().any(|s| s.manifest.name == "test-skill"));
+        unsafe { std::env::remove_var("HOME") };
     }
 }
