@@ -398,6 +398,7 @@ static ALL_HOOKS_ADAPTERS: LazyLock<Vec<Box<dyn HooksAdapter>>> = LazyLock::new(
         Box::new(cursor::CursorAdapter::new()),
         Box::new(codex::CodexAdapter::new()),
         Box::new(windsurf::WindsurfAdapter::new()),
+        Box::new(opencode::OpencodeAdapter::new()),
     ]
 });
 
@@ -455,7 +456,9 @@ pub trait SkillsAdapter: Send + Sync {
 static ALL_SKILLS_ADAPTERS: LazyLock<Vec<Box<dyn SkillsAdapter>>> = LazyLock::new(|| {
     vec![
         Box::new(claude::ClaudeSkillsAdapter),
+        Box::new(codex::CodexSkillsAdapter),
         Box::new(cursor::CursorSkillsAdapter),
+        Box::new(kimi::KimiSkillsAdapter),
         Box::new(opencode::OpenCodeSkillsAdapter),
         Box::new(proma::PromaSkillsAdapter),
         Box::new(trae::TraeSkillsAdapter),
@@ -733,15 +736,16 @@ mod tests {
     }
 
     #[test]
-    fn all_hooks_adapters_returns_five() {
+    fn all_hooks_adapters_returns_six() {
         let adapters = all_hooks_adapters();
-        assert_eq!(adapters.len(), 5);
+        assert_eq!(adapters.len(), 6);
         let names: Vec<_> = adapters.iter().map(|a| a.name()).collect();
         assert!(names.contains(&"claude-code"));
         assert!(names.contains(&"kimi"));
         assert!(names.contains(&"cursor"));
         assert!(names.contains(&"codex"));
         assert!(names.contains(&"windsurf"));
+        assert!(names.contains(&"opencode"));
     }
 
     #[test]
@@ -754,6 +758,7 @@ mod tests {
         assert_eq!(find_hooks_adapter("cursor").unwrap().name(), "cursor");
         assert_eq!(find_hooks_adapter("codex").unwrap().name(), "codex");
         assert_eq!(find_hooks_adapter("windsurf").unwrap().name(), "windsurf");
+        assert_eq!(find_hooks_adapter("opencode").unwrap().name(), "opencode");
     }
 
     #[test]
@@ -832,10 +837,12 @@ mod tests {
     #[test]
     fn all_skills_adapters_returns_six() {
         let adapters = all_skills_adapters();
-        assert_eq!(adapters.len(), 6);
+        assert_eq!(adapters.len(), 8);
         let names: Vec<_> = adapters.iter().map(|a| a.name()).collect();
         assert!(names.contains(&"claude-code"));
+        assert!(names.contains(&"codex"));
         assert!(names.contains(&"cursor"));
+        assert!(names.contains(&"kimi"));
         assert!(names.contains(&"opencode"));
         assert!(names.contains(&"proma"));
         assert!(names.contains(&"trae"));

@@ -21,6 +21,8 @@ fn init_creates_global_config() {
     cmd.arg("--yes");
     cmd.env("HOME", dir.path());
     cmd.env_remove("XDG_CONFIG_HOME");
+    // Run from the temp dir so git-repo detection does not trigger local mode.
+    cmd.current_dir(&dir);
 
     let output = cmd.output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -76,6 +78,8 @@ fn init_refuses_overwrite() {
     cmd.arg("--yes");
     cmd.env("HOME", dir.path());
     cmd.env_remove("XDG_CONFIG_HOME");
+    // Run from the temp dir so git-repo detection does not trigger local mode.
+    cmd.current_dir(&dir);
 
     let output = cmd.output().unwrap();
     assert!(

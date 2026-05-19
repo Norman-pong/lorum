@@ -114,6 +114,7 @@ fn import_from_nonexistent_adapter_returns_error() {
 }
 
 #[test]
+#[serial]
 fn import_creates_config_if_missing() {
     let dir = TempDir::new().unwrap();
     let config_path = dir.path().join("config.yaml");
@@ -128,6 +129,7 @@ fn import_creates_config_if_missing() {
 // ---- Check tests ----
 
 #[test]
+#[serial]
 fn check_valid_config() {
     let initial = LorumConfig {
         mcp: McpConfig {
@@ -165,6 +167,7 @@ fn check_empty_command_returns_error() {
 }
 
 #[test]
+#[serial]
 fn check_empty_config_is_valid() {
     let initial = LorumConfig::default();
     let (_dir, config_path) = setup_temp_config(Some(&initial));
@@ -175,6 +178,7 @@ fn check_empty_config_is_valid() {
 // ---- run_sync tests ----
 
 #[test]
+#[serial]
 fn run_sync_dry_run_empty_config() {
     let dir = TempDir::new().unwrap();
     let config_path = dir.path().join("config.yaml");

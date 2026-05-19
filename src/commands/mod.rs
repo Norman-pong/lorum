@@ -12,7 +12,8 @@ pub mod backup_cmds;
 pub mod doctor;
 pub use doctor::{
     ConsistencyReport, DoctorResult, print_consistency_reports, print_doctor_results, run_doctor,
-    run_doctor_consistency,
+    run_doctor_consistency, run_doctor_hooks_consistency, run_doctor_rules_consistency,
+    run_doctor_skills_consistency,
 };
 pub mod hook;
 #[cfg(test)]
@@ -70,53 +71,18 @@ pub fn run_init(config_path: Option<&str>, local: bool, yes: bool) -> Result<(),
     }
 }
 
-/// Detect which AI coding tools are installed by checking for their config dirs.
+/// Detect which AI coding tools are installed by checking adapter config paths.
+///
+/// Iterates all registered [`ToolAdapter`]s via [`crate::adapters::all_adapters`]
+/// and returns the names of those whose [`ToolAdapter::config_paths`] include at
+/// least one existing path. This is fully dynamic: adding a new adapter to the
+/// registry is sufficient for it to be detected here — no further changes needed.
 fn detect_installed_tools() -> Vec<String> {
-    let mut tools = Vec::new();
-    if let Some(home) = dirs::home_dir() {
-        if home.join(".claude").exists() {
-            tools.push("claude-code".into());
-        }
-        if home.join(".codex").exists() {
-            tools.push("codex".into());
-        }
-        if home.join(".proma").exists() {
-            tools.push("proma".into());
-        }
-        if home.join(".kimi").exists() {
-            tools.push("kimi".into());
-        }
-        if home.join(".codeium").exists() {
-            tools.push("windsurf".into());
-        }
-        if home.join(".config").join("opencode").exists() {
-            tools.push("opencode".into());
-        }
-        if home.join(".continue").exists() {
-            tools.push("continue".into());
-        }
-    }
-    if std::env::current_dir()
-        .map(|d| d.join(".trae").exists())
-        .unwrap_or(false)
-    {
-        tools.push("trae".into());
-    }
-    if std::env::current_dir()
-        .map(|d| d.join(".cursor").exists())
-        .unwrap_or(false)
-    {
-        tools.push("cursor".into());
-    }
-    if command_exists("windsurf") {
-        tools.push("windsurf".into());
-    }
-    if command_exists("opencode") {
-        tools.push("opencode".into());
-    }
-    if command_exists("continue") {
-        tools.push("continue".into());
-    }
+    let mut tools: Vec<String> = crate::adapters::all_adapters()
+        .iter()
+        .filter(|a| a.config_paths().iter().any(|p| p.exists()))
+        .map(|a| a.name().to_string())
+        .collect();
     tools.sort();
     tools.dedup();
     tools
@@ -353,6 +319,41 @@ pub fn run_sync(
     Ok(())
 }
 
+/// Run the unified `sync` subcommand across multiple dimensions.
+///
+/// Dispatches to dimension-specific sync functions based on the provided
+/// [`SyncDimension`](crate::SyncDimension) slice. The execution order is
+/// MCP → Rules → Hooks → Skills to avoid file contention on shared configs.
+///
+/// # Errors
+///
+/// Propagates errors from any dimension that fails (fail-fast on first error).
+pub fn run_sync_dimensions(
+    dimensions: &[crate::SyncDimension],
+    dry_run: bool,
+    tools: &[String],
+    expand_env: bool,
+    config_path: Option<&str>,
+) -> Result<(), LorumError> {
+    for dim in dimensions {
+        match dim {
+            crate::SyncDimension::Mcp => {
+                run_sync(dry_run, tools, expand_env, config_path)?;
+            }
+            crate::SyncDimension::Rules => {
+                rule::run_rule_sync(dry_run, tools)?;
+            }
+            crate::SyncDimension::Hooks => {
+                hook::run_hook_sync(dry_run, tools, config_path)?;
+            }
+            crate::SyncDimension::Skills => {
+                skill::run_skill_sync(dry_run, tools, None)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn print_dry_run_results(results: &[crate::sync::DryRunResult]) {
     for r in results {
         let status = if r.success { "OK" } else { "FAIL" };
@@ -397,7 +398,8 @@ pub struct SelfCheckIssue {
 /// Perform a self-check of the effective configuration and return structured issues.
 ///
 /// Checks MCP servers (command availability, env references), hooks (event
-/// names, handler fields), and the unified skills directory structure.
+/// names, handler fields), the unified skills directory structure, and the
+/// unified rules file.
 pub fn perform_self_check(config_path: Option<&str>) -> Result<Vec<SelfCheckIssue>, LorumError> {
     let config =
         config::resolve_effective_config_from_cwd(config_path.map(PathBuf::from).as_deref())?;
@@ -406,6 +408,7 @@ pub fn perform_self_check(config_path: Option<&str>) -> Result<Vec<SelfCheckIssu
     check_mcp_servers_structured(&config, &mut issues);
     check_hooks_structured(&config, &mut issues);
     check_skills_structured(&mut issues);
+    check_rules_structured(&mut issues);
 
     Ok(issues)
 }
@@ -413,7 +416,8 @@ pub fn perform_self_check(config_path: Option<&str>) -> Result<Vec<SelfCheckIssu
 /// Run the `check` subcommand: validates the effective configuration.
 ///
 /// Checks MCP servers (command availability, env references), hooks (event
-/// names, handler fields), and the unified skills directory structure.
+/// names, handler fields), the unified skills directory structure, and the
+/// unified rules file.
 pub fn run_check(config_path: Option<&str>) -> Result<(), LorumError> {
     let config =
         config::resolve_effective_config_from_cwd(config_path.map(PathBuf::from).as_deref())?;
@@ -537,6 +541,46 @@ fn check_skills_structured(issues: &mut Vec<SelfCheckIssue>) {
             }
         },
         _ => {} // No global skills directory yet — that's fine.
+    }
+}
+
+/// Check the unified rules file for non-empty content and valid path.
+fn check_rules_structured(issues: &mut Vec<SelfCheckIssue>) {
+    let cwd = match std::env::current_dir() {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    let project_root = match crate::rules::find_project_root(&cwd) {
+        Some(root) => root,
+        None => return, // No project root — rules are optional.
+    };
+
+    match crate::rules::load_rules(&project_root) {
+        Ok(rules) => {
+            if rules.sections.is_empty() && rules.preamble.trim().is_empty() {
+                issues.push(SelfCheckIssue {
+                    category: "rules".into(),
+                    message: "rules file is empty (no sections, no preamble)".into(),
+                });
+            }
+            for section in &rules.sections {
+                if section.name.trim().is_empty() {
+                    issues.push(SelfCheckIssue {
+                        category: "rules".into(),
+                        message: "rules file contains a section with an empty name".into(),
+                    });
+                }
+            }
+        }
+        Err(crate::error::LorumError::ConfigNotFound { .. }) => {
+            // No rules file — that's fine, rules are optional.
+        }
+        Err(e) => {
+            issues.push(SelfCheckIssue {
+                category: "rules".into(),
+                message: format!("failed to load rules file: {e}"),
+            });
+        }
     }
 }
 

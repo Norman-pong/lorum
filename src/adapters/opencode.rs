@@ -1,8 +1,16 @@
-//! Opencode adapter for reading/writing MCP configuration.
+//! Opencode adapter for reading/writing MCP configuration, rules, skills, and hooks.
 //!
 //! Configuration files:
 //! - Global: `~/.config/opencode/opencode.json`
 //! - Project-level: `opencode.json` (fallback)
+//!
+//! Hooks files (EXPERIMENTAL):
+//! - Global: `~/.config/opencode/hooks.json`
+//! - Project-level: `{cwd}/hooks.json` (fallback)
+//!
+//! OpenCode does not have a documented hooks configuration system. The hooks
+//! support here is based on best-effort inference using camelCase event names
+//! in a JSON format matching other adapters.
 //!
 //! Format (JSON):
 //! ```json
@@ -31,10 +39,11 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::adapters::{
-    ConfigValidator, RulesAdapter, Severity, SkillsAdapter, ToolAdapter, ValidationIssue,
-    json_utils, read_rules_file, validate_all_syntax, write_rules_file,
+    ConfigValidator, HooksAdapter, RulesAdapter, Severity, SkillsAdapter, ToolAdapter,
+    ValidationIssue, camel_to_kebab, json_utils, kebab_to_camel, read_rules_file,
+    validate_all_syntax, write_rules_file,
 };
-use crate::config::{McpConfig, McpServer};
+use crate::config::{HooksConfig, McpConfig, McpServer};
 use crate::error::LorumError;
 use crate::skills::{SkillEntry, copy_dir_recursive, scan_skills_dir};
 
@@ -174,6 +183,20 @@ impl OpencodeAdapter {
             Self::global_config_path()
         }
     }
+
+    /// Returns the global Opencode hooks path: `~/.config/opencode/hooks.json`.
+    fn global_hooks_path() -> Option<PathBuf> {
+        dirs::home_dir().map(|h| h.join(".config").join("opencode").join("hooks.json"))
+    }
+
+    /// Returns the project-level Opencode hooks path: `{cwd}/hooks.json`.
+    fn project_hooks_path(&self) -> Option<PathBuf> {
+        let root = self
+            .project_root
+            .clone()
+            .or_else(|| std::env::current_dir().ok())?;
+        Some(root.join("hooks.json"))
+    }
 }
 
 impl Default for OpencodeAdapter {
@@ -189,7 +212,7 @@ impl ConfigValidator for OpencodeAdapter {
 
     fn validate_config(&self) -> Result<Vec<ValidationIssue>, LorumError> {
         // 1. Run default syntax validation for all existing config files
-        let mut issues = validate_all_syntax(&self.config_paths());
+        let mut issues = validate_all_syntax(&ToolAdapter::config_paths(self));
 
         // 2. Extra check: if both global and project-level configs exist,
         //    detect server name conflicts
@@ -244,6 +267,61 @@ impl ConfigValidator for OpencodeAdapter {
         }
 
         Ok(issues)
+    }
+}
+
+impl HooksAdapter for OpencodeAdapter {
+    fn name(&self) -> &str {
+        "opencode"
+    }
+
+    fn config_paths(&self) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        if let Some(p) = Self::global_hooks_path() {
+            paths.push(p);
+        }
+        if let Some(p) = self.project_hooks_path() {
+            paths.push(p);
+        }
+        paths
+    }
+
+    fn read_hooks(&self) -> Result<HooksConfig, LorumError> {
+        // Try global first, then project-level fallback.
+        let paths = [Self::global_hooks_path(), self.project_hooks_path()];
+        for path in paths.into_iter().flatten() {
+            if path.exists() {
+                let root = json_utils::read_existing_json(&path)?;
+                return Ok(parse_hooks_from_json(root.get("hooks")));
+            }
+        }
+        Ok(HooksConfig::default())
+    }
+
+    fn write_hooks(&self, config: &HooksConfig) -> Result<(), LorumError> {
+        // Write to project-level path if available, otherwise global.
+        let path = match self.project_hooks_path() {
+            Some(p) => p,
+            None => match Self::global_hooks_path() {
+                Some(p) => p,
+                None => {
+                    return Err(LorumError::Other {
+                        message: "cannot determine hooks directory".into(),
+                    });
+                }
+            },
+        };
+        let mut root = json_utils::read_existing_json(&path)?;
+        root["hooks"] = hooks_config_to_json_value(config);
+        json_utils::write_json(&path, &root)
+    }
+
+    fn lorum_to_tool_event(&self, lorum_event: &str) -> Option<String> {
+        Some(kebab_to_camel(lorum_event))
+    }
+
+    fn tool_to_lorum_event(&self, tool_event: &str) -> Option<String> {
+        Some(camel_to_kebab(tool_event))
     }
 }
 
@@ -358,6 +436,16 @@ impl ToolAdapter for OpencodeAdapter {
         root[MCP_FIELD] = serde_json::Value::Object(mcp_map);
         json_utils::write_json(&path, &root)
     }
+}
+
+/// Parse hooks from a JSON value (OpenCode uses `"matcher"` as the matcher key).
+fn parse_hooks_from_json(value: Option<&serde_json::Value>) -> HooksConfig {
+    json_utils::parse_hooks_from_json_value(value, camel_to_kebab, "matcher")
+}
+
+/// Convert a `HooksConfig` to a JSON value (OpenCode uses `"matcher"` as the matcher key).
+fn hooks_config_to_json_value(config: &HooksConfig) -> serde_json::Value {
+    json_utils::hooks_config_to_json_value(config, kebab_to_camel, "matcher")
 }
 
 #[cfg(test)]
@@ -575,7 +663,7 @@ mod tests {
     #[test]
     fn config_paths_returns_both() {
         let adapter = OpencodeAdapter::new();
-        let paths = adapter.config_paths();
+        let paths = ToolAdapter::config_paths(&adapter);
         assert_eq!(paths.len(), 2);
         assert!(paths[0].ends_with(".config/opencode/opencode.json"));
         assert!(paths[1].ends_with("opencode.json"));
@@ -585,9 +673,236 @@ mod tests {
     fn with_project_root_overrides_cwd() {
         let dir = tempfile::tempdir().unwrap();
         let adapter = OpencodeAdapter::with_project_root(dir.path().to_path_buf());
-        let paths = adapter.config_paths();
+        let paths = ToolAdapter::config_paths(&adapter);
         assert_eq!(paths.len(), 2);
         assert_eq!(paths[1], dir.path().join("opencode.json"));
+    }
+}
+
+#[cfg(test)]
+mod hooks_tests {
+    use super::*;
+    use crate::config::HookHandler;
+    use std::fs;
+
+    #[test]
+    fn opencode_hooks_event_mapping() {
+        let adapter = OpencodeAdapter::new();
+
+        // kebab-case -> camelCase
+        assert_eq!(
+            adapter.lorum_to_tool_event("pre-tool-use"),
+            Some("preToolUse".into())
+        );
+        assert_eq!(
+            adapter.lorum_to_tool_event("post-tool-use"),
+            Some("postToolUse".into())
+        );
+        assert_eq!(
+            adapter.lorum_to_tool_event("session-start"),
+            Some("sessionStart".into())
+        );
+
+        // camelCase -> kebab-case
+        assert_eq!(
+            adapter.tool_to_lorum_event("preToolUse"),
+            Some("pre-tool-use".into())
+        );
+        assert_eq!(
+            adapter.tool_to_lorum_event("postToolUse"),
+            Some("post-tool-use".into())
+        );
+        assert_eq!(
+            adapter.tool_to_lorum_event("sessionStart"),
+            Some("session-start".into())
+        );
+
+        // Roundtrip.
+        assert_eq!(
+            adapter.tool_to_lorum_event(&adapter.lorum_to_tool_event("pre-read-file").unwrap()),
+            Some("pre-read-file".into())
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn opencode_hooks_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        let adapter = OpencodeAdapter::with_project_root(dir.path().to_path_buf());
+
+        // Create project-level hooks.json
+        let hooks_path = dir.path().join("hooks.json");
+        fs::write(&hooks_path, "{}").unwrap();
+
+        let mut config = HooksConfig::default();
+        config.events.insert(
+            "pre-tool-use".into(),
+            vec![HookHandler {
+                matcher: "Bash".into(),
+                command: "check.sh".into(),
+                timeout: Some(30),
+                handler_type: Some("command".into()),
+            }],
+        );
+        config.events.insert(
+            "post-tool-use".into(),
+            vec![HookHandler {
+                matcher: "*".into(),
+                command: "notify.sh".into(),
+                timeout: None,
+                handler_type: None,
+            }],
+        );
+
+        adapter.write_hooks(&config).unwrap();
+
+        let read = adapter.read_hooks().unwrap();
+        assert_eq!(read.events.len(), 2);
+        let handlers = &read.events["pre-tool-use"];
+        assert_eq!(handlers.len(), 1);
+        assert_eq!(handlers[0].matcher, "Bash");
+        assert_eq!(handlers[0].command, "check.sh");
+        assert_eq!(handlers[0].timeout, Some(30));
+        assert_eq!(handlers[0].handler_type, Some("command".into()));
+
+        unsafe { std::env::remove_var("HOME") };
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn opencode_hooks_preserves_other_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        let path = dir.path().join("hooks.json");
+
+        let original = r#"{"version": 2, "hooks": {}}"#;
+        fs::write(&path, original).unwrap();
+
+        let adapter = OpencodeAdapter::with_project_root(dir.path().to_path_buf());
+        let mut config = HooksConfig::default();
+        config.events.insert(
+            "pre-tool-use".into(),
+            vec![HookHandler {
+                matcher: "Bash".into(),
+                command: "check.sh".into(),
+                timeout: None,
+                handler_type: None,
+            }],
+        );
+        adapter.write_hooks(&config).unwrap();
+
+        let result: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(result["version"], 2);
+        assert_eq!(result["hooks"]["preToolUse"][0]["matcher"], "Bash");
+
+        unsafe { std::env::remove_var("HOME") };
+    }
+
+    #[test]
+    fn opencode_hooks_config_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let adapter = OpencodeAdapter::with_project_root(dir.path().to_path_buf());
+        let paths = HooksAdapter::config_paths(&adapter);
+        assert_eq!(paths.len(), 2);
+        assert!(paths[0].ends_with(".config/opencode/hooks.json"));
+        assert_eq!(paths[1], dir.path().join("hooks.json"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn opencode_hooks_reads_global_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+
+        // Create global hooks.json with content
+        let global_hooks_dir = dir.path().join(".config").join("opencode");
+        fs::create_dir_all(&global_hooks_dir).unwrap();
+        let global_hooks_path = global_hooks_dir.join("hooks.json");
+        let json = serde_json::json!({
+            "hooks": {
+                "preToolUse": [
+                    { "matcher": "*", "command": "global.sh" }
+                ]
+            }
+        });
+        fs::write(&global_hooks_path, serde_json::to_string(&json).unwrap()).unwrap();
+
+        // Use a project root that doesn't have hooks.json
+        let adapter =
+            OpencodeAdapter::with_project_root(dir.path().join("nonexistent").to_path_buf());
+        let result = adapter.read_hooks().unwrap();
+        assert_eq!(result.events.len(), 1);
+        assert!(result.events.contains_key("pre-tool-use"));
+        assert_eq!(result.events["pre-tool-use"][0].command, "global.sh");
+
+        unsafe { std::env::remove_var("HOME") };
+    }
+
+    #[test]
+    fn opencode_hooks_empty_when_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let adapter = OpencodeAdapter::with_project_root(dir.path().to_path_buf());
+        let result = adapter.read_hooks().unwrap();
+        assert!(result.events.is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn opencode_hooks_unknown_events_preserved_on_read() {
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        let path = dir.path().join("hooks.json");
+
+        let json = serde_json::json!({
+            "hooks": {
+                "customEvent": [
+                    { "matcher": "*", "command": "run.sh" }
+                ]
+            }
+        });
+        fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+
+        let adapter = OpencodeAdapter::with_project_root(dir.path().to_path_buf());
+        let config = adapter.read_hooks().unwrap();
+
+        // "customEvent" -> "custom-event" via camel_to_kebab
+        assert!(config.events.contains_key("custom-event"));
+        let handlers = &config.events["custom-event"];
+        assert_eq!(handlers[0].command, "run.sh");
+
+        unsafe { std::env::remove_var("HOME") };
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn opencode_hooks_write_creates_file_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        let path = dir.path().join("hooks.json");
+        assert!(!path.exists());
+
+        let adapter = OpencodeAdapter::with_project_root(dir.path().to_path_buf());
+        let mut config = HooksConfig::default();
+        config.events.insert(
+            "pre-tool-use".into(),
+            vec![HookHandler {
+                matcher: "Bash".into(),
+                command: "check.sh".into(),
+                timeout: None,
+                handler_type: None,
+            }],
+        );
+        adapter.write_hooks(&config).unwrap();
+
+        assert!(path.exists());
+        let result: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(result["hooks"]["preToolUse"][0]["matcher"], "Bash");
+        assert_eq!(result["hooks"]["preToolUse"][0]["command"], "check.sh");
+
+        unsafe { std::env::remove_var("HOME") };
     }
 }
 

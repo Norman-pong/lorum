@@ -37,11 +37,12 @@
 use std::path::{Path, PathBuf};
 
 use crate::adapters::{
-    ConfigValidator, HooksAdapter, RulesAdapter, ToolAdapter, ValidationIssue,
+    ConfigValidator, HooksAdapter, RulesAdapter, SkillsAdapter, ToolAdapter, ValidationIssue,
     default_validate_config, json_utils, kebab_to_pascal, pascal_to_kebab, toml_utils,
 };
 use crate::config::{HookHandler, HooksConfig, McpConfig};
 use crate::error::LorumError;
+use crate::skills::{SkillEntry, copy_dir_recursive, scan_skills_dir};
 
 /// Adapter for Codex.
 ///
@@ -235,6 +236,84 @@ impl RulesAdapter for CodexRulesAdapter {
 
     fn write_rules(&self, project_root: &Path, content: &str) -> Result<(), LorumError> {
         crate::adapters::write_rules_file(&self.rules_path(project_root), content)
+    }
+}
+
+/// Adapter for Codex skills.
+///
+/// Reads and writes skills from Codex's `~/.codex/skills/` directory.
+///
+/// Codex CLI supports custom skills stored as directories under
+/// `~/.codex/skills/`.  Each skill directory contains a required `SKILL.md`
+/// file with YAML frontmatter (`name` and `description`) plus optional
+/// sub-directories such as `scripts/`, `references/`, and `assets/`.
+pub struct CodexSkillsAdapter;
+
+impl SkillsAdapter for CodexSkillsAdapter {
+    /// Returns the adapter name `"codex"`.
+    fn name(&self) -> &str {
+        "codex"
+    }
+
+    /// Returns `~/.codex/skills/` as the base skills directory.
+    ///
+    /// Returns `None` if the home directory cannot be determined.
+    fn skills_base_dir(&self) -> Option<PathBuf> {
+        dirs::home_dir().map(|h| h.join(".codex").join("skills"))
+    }
+
+    /// Reads all skills from `~/.codex/skills/`.
+    ///
+    /// Returns an empty vector if the directory does not exist or the home
+    /// directory cannot be determined.
+    fn read_skills(&self) -> Result<Vec<SkillEntry>, LorumError> {
+        let Some(dir) = self.skills_base_dir() else {
+            return Ok(Vec::new());
+        };
+        scan_skills_dir(&dir)
+    }
+
+    /// Copies a skill directory into `~/.codex/skills/<name>`.
+    ///
+    /// If a skill with the same name already exists, it is renamed to
+    /// `.old-<name>` before the new content is copied.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LorumError::Other`] if the home directory cannot be
+    /// determined, or [`LorumError::Io`] on filesystem failures.
+    fn write_skill(&self, name: &str, source_dir: &Path) -> Result<(), LorumError> {
+        let dir = self.skills_base_dir().ok_or_else(|| LorumError::Other {
+            message: "cannot determine home directory".into(),
+        })?;
+        let target = dir.join(name);
+        if target.exists() {
+            let old = dir.join(format!(".old-{name}"));
+            if old.exists() {
+                std::fs::remove_dir_all(&old)?;
+            }
+            std::fs::rename(&target, &old)?;
+        }
+        copy_dir_recursive(source_dir, &target)
+    }
+
+    /// Removes a skill directory from `~/.codex/skills/`.
+    ///
+    /// Silently succeeds if the skill does not exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LorumError::Other`] if the home directory cannot be
+    /// determined, or [`LorumError::Io`] on filesystem failures.
+    fn remove_skill(&self, name: &str) -> Result<(), LorumError> {
+        let dir = self.skills_base_dir().ok_or_else(|| LorumError::Other {
+            message: "cannot determine home directory".into(),
+        })?;
+        let target = dir.join(name);
+        if target.exists() {
+            std::fs::remove_dir_all(target)?;
+        }
+        Ok(())
     }
 }
 
@@ -820,5 +899,117 @@ KEY = "value"
         assert_eq!(pre_handlers.len(), 1);
         assert_eq!(pre_handlers[0].matcher, "*");
         assert_eq!(pre_handlers[0].command, "echo no-matcher");
+    }
+}
+
+#[cfg(test)]
+mod codex_skills_tests {
+    use super::*;
+
+    #[test]
+    fn skills_adapter_name() {
+        let adapter = CodexSkillsAdapter;
+        assert_eq!(adapter.name(), "codex");
+    }
+
+    #[test]
+    fn skills_base_dir_returns_codex_skills_path() {
+        let adapter = CodexSkillsAdapter;
+        let dir = adapter.skills_base_dir();
+        assert!(dir.is_some());
+        let dir = dir.unwrap();
+        assert!(dir.ends_with(".codex/skills"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn read_skills_empty_when_no_dir() {
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", home.path()) };
+        let adapter = CodexSkillsAdapter;
+        let skills = adapter.read_skills().unwrap();
+        assert!(skills.is_empty());
+        unsafe { std::env::remove_var("HOME") };
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn write_skill_copies_directory_contents() {
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", home.path()) };
+        let src = tempfile::tempdir().unwrap();
+        std::fs::write(
+            src.path().join("SKILL.md"),
+            "---\nname: test-skill\ndescription: \"Test\"\n---\n",
+        )
+        .unwrap();
+
+        let adapter = CodexSkillsAdapter;
+        adapter.write_skill("test-skill", src.path()).unwrap();
+        let skills = adapter.read_skills().unwrap();
+        assert!(skills.iter().any(|s| s.manifest.name == "test-skill"));
+        adapter.remove_skill("test-skill").unwrap();
+        unsafe { std::env::remove_var("HOME") };
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn write_skill_replaces_existing_skill() {
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", home.path()) };
+        let src1 = tempfile::tempdir().unwrap();
+        std::fs::write(
+            src1.path().join("SKILL.md"),
+            "---\nname: my-skill\ndescription: \"v1\"\n---\n",
+        )
+        .unwrap();
+
+        let adapter = CodexSkillsAdapter;
+        adapter.write_skill("my-skill", src1.path()).unwrap();
+
+        let src2 = tempfile::tempdir().unwrap();
+        std::fs::write(
+            src2.path().join("SKILL.md"),
+            "---\nname: my-skill\ndescription: \"v2\"\n---\n",
+        )
+        .unwrap();
+        adapter.write_skill("my-skill", src2.path()).unwrap();
+
+        // The new skill directory should exist with the updated description.
+        let skills_base = adapter.skills_base_dir().unwrap();
+        let skill_md = skills_base.join("my-skill").join("SKILL.md");
+        assert!(skill_md.exists());
+        let content = std::fs::read_to_string(&skill_md).unwrap();
+        assert!(content.contains("v2"));
+        // The old version should be backed up under .old-my-skill.
+        let backup_md = skills_base.join(".old-my-skill").join("SKILL.md");
+        assert!(backup_md.exists());
+        adapter.remove_skill("my-skill").unwrap();
+        unsafe { std::env::remove_var("HOME") };
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn remove_skill_deletes_directory() {
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", home.path()) };
+        let adapter = CodexSkillsAdapter;
+        adapter
+            .write_skill("test-skill", tempfile::tempdir().unwrap().path())
+            .unwrap();
+        adapter.remove_skill("test-skill").unwrap();
+        let skills = adapter.read_skills().unwrap();
+        assert!(!skills.iter().any(|s| s.manifest.name == "test-skill"));
+        unsafe { std::env::remove_var("HOME") };
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn remove_skill_succeeds_when_nonexistent() {
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", home.path()) };
+        let adapter = CodexSkillsAdapter;
+        adapter.remove_skill("nonexistent-skill").unwrap();
+        unsafe { std::env::remove_var("HOME") };
     }
 }

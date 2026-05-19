@@ -205,6 +205,114 @@ impl ConfigDiff {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Dimension-specific diff types
+// ---------------------------------------------------------------------------
+
+/// A handler that was modified within a hook event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModifiedHandler {
+    /// Event name where the handler change occurred.
+    pub event: String,
+    /// Old handler command.
+    pub old_handler: String,
+    /// New handler command.
+    pub new_handler: String,
+}
+
+/// Diff between current and target hooks configurations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HooksDiff {
+    /// Events present in target but not in current.
+    pub added_events: Vec<String>,
+    /// Events present in current but not in target.
+    pub removed_events: Vec<String>,
+    /// Handlers that changed within existing events.
+    pub modified_handlers: Vec<ModifiedHandler>,
+}
+
+impl HooksDiff {
+    /// Returns `true` if there are no changes.
+    pub fn is_empty(&self) -> bool {
+        self.added_events.is_empty()
+            && self.removed_events.is_empty()
+            && self.modified_handlers.is_empty()
+    }
+
+    /// Returns the total number of changes.
+    pub fn change_count(&self) -> usize {
+        self.added_events.len() + self.removed_events.len() + self.modified_handlers.len()
+    }
+}
+
+/// Diff between current and target skills configurations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillsDiff {
+    /// Skills present in target but not in current.
+    pub added_skills: Vec<String>,
+    /// Skills present in current but not in target.
+    pub removed_skills: Vec<String>,
+    /// Skills present in both but with different content.
+    pub modified_skills: Vec<String>,
+}
+
+impl SkillsDiff {
+    /// Returns `true` if there are no changes.
+    pub fn is_empty(&self) -> bool {
+        self.added_skills.is_empty()
+            && self.removed_skills.is_empty()
+            && self.modified_skills.is_empty()
+    }
+
+    /// Returns the total number of changes.
+    pub fn change_count(&self) -> usize {
+        self.added_skills.len() + self.removed_skills.len() + self.modified_skills.len()
+    }
+}
+
+/// A single line-level diff entry for rules content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffLine {
+    /// Line number in the unified content (1-based).
+    pub line_number: usize,
+    /// Content of the line in the unified config.
+    pub unified_line: String,
+    /// Content of the line in the tool's config, or `None` if the line is
+    /// absent from the tool's config.
+    pub tool_line: Option<String>,
+}
+
+/// Diff between current and target rules content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RulesDiff {
+    /// Whether the rules content is byte-for-byte identical.
+    pub consistent: bool,
+    /// Line-level diffs for non-identical rules.
+    pub line_diffs: Vec<DiffLine>,
+}
+
+impl RulesDiff {
+    /// Returns `true` if rules are consistent (no diffs).
+    pub fn is_empty(&self) -> bool {
+        self.consistent
+    }
+}
+
+/// Dimension-specific diff wrapper.
+///
+/// Each variant carries the diff type appropriate to its dimension.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DimensionDiff {
+    /// MCP server configuration diff.
+    Mcp(ConfigDiff),
+    /// Hooks configuration diff.
+    Hooks(HooksDiff),
+    /// Skills configuration diff.
+    Skills(SkillsDiff),
+    /// Rules content diff.
+    Rules(RulesDiff),
+}
+
 /// Result of a dry-run preview for a single tool.
 #[derive(Debug)]
 pub struct DryRunResult {

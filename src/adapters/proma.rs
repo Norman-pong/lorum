@@ -1,5 +1,33 @@
 //! Proma adapter for reading/writing MCP configuration.
 //!
+//! Proma does not support hooks configuration as of 2026-05-19.
+//! Proma does not support rules configuration as of 2026-05-19.
+//!
+//! ProMa (by ErlichLiu) is a local-first AI desktop app with a `~/.proma/`
+//! directory structure. Its configuration files include:
+//! - `channels.json` (AI provider configs)
+//! - `settings.json` (app settings)
+//! - `user-profile.json` (user profile)
+//! - `agent-workspaces/{slug}/mcp.json` (per-workspace MCP servers)
+//! - `agent-workspaces/{slug}/skills/` (per-workspace skills)
+//!
+//! There is no `hooks.json` or equivalent hooks configuration file.
+//! References to "hooks" in ProMa release notes (e.g. v0.7.1, v0.9.6) are
+//! React frontend hooks (`useSyncActiveTabSideEffects`, etc.), not user-
+//! configurable event hooks like `pre-tool-use` / `post-tool-use`.
+//!
+//! Therefore, `PromaAdapter` does NOT implement `HooksAdapter`.
+//!
+//! There is no dedicated rules file (`rules.md`, `AGENTS.md`, or equivalent)
+//! in the ProMa configuration directory. ProMa's mechanism for custom
+//! instructions is entirely through Skills (`SKILL.md` files within each
+//! workspace's `skills/` directory), which are already covered by
+//! `PromaSkillsAdapter`. ProMa constructs its Agent system prompt by combining
+//! a static built-in prompt with dynamic workspace context (MCP servers and
+//! Skills). There is no user-editable global or project-level rules file.
+//!
+//! Therefore, `PromaAdapter` does NOT implement `RulesAdapter`.
+//!
 //! Configuration file: `~/.proma/mcp.json` (global)
 //!
 //! Format (JSON):

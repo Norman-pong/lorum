@@ -51,7 +51,7 @@ enum Commands {
         dry_run: bool,
     },
 
-    /// Synchronise MCP configuration across tools.
+    /// Synchronise configuration across tools.
     Sync {
         /// Show what would change without writing anything.
         #[arg(long)]
@@ -64,6 +64,26 @@ enum Commands {
         /// Expand environment variable references in the config.
         #[arg(long = "expand-env")]
         expand_env: bool,
+
+        /// Sync MCP server configurations (default when no dimension flags given).
+        #[arg(long)]
+        mcp: bool,
+
+        /// Sync lifecycle hooks.
+        #[arg(long)]
+        hooks: bool,
+
+        /// Sync skills directories.
+        #[arg(long)]
+        skills: bool,
+
+        /// Sync rules files.
+        #[arg(long)]
+        rules: bool,
+
+        /// Sync all dimensions (MCP + hooks + skills + rules).
+        #[arg(long)]
+        all: bool,
     },
 
     /// Validate the current configuration.
@@ -337,6 +357,48 @@ enum HookAction {
     },
 }
 
+/// Determine which dimensions to sync based on CLI flags.
+///
+/// - If `--all` is set, all four dimensions are returned.
+/// - If any dimension flag (`--mcp`, `--hooks`, `--skills`, `--rules`) is set,
+///   exactly those dimensions are returned.
+/// - If no flags are given, only MCP is synced (backward-compatible default).
+fn resolve_sync_dimensions(
+    mcp: bool,
+    hooks: bool,
+    skills: bool,
+    rules: bool,
+    all: bool,
+) -> Vec<lorum::SyncDimension> {
+    use lorum::SyncDimension;
+    if all {
+        return vec![
+            SyncDimension::Mcp,
+            SyncDimension::Rules,
+            SyncDimension::Hooks,
+            SyncDimension::Skills,
+        ];
+    }
+    let any_explicit = mcp || hooks || skills || rules;
+    if !any_explicit {
+        return vec![SyncDimension::Mcp];
+    }
+    let mut dims = Vec::new();
+    if mcp {
+        dims.push(SyncDimension::Mcp);
+    }
+    if rules {
+        dims.push(SyncDimension::Rules);
+    }
+    if hooks {
+        dims.push(SyncDimension::Hooks);
+    }
+    if skills {
+        dims.push(SyncDimension::Skills);
+    }
+    dims
+}
+
 impl Cli {
     /// Parse CLI arguments and dispatch to the appropriate subcommand.
     fn run(self) -> Result<(), lorum::error::LorumError> {
@@ -378,13 +440,30 @@ impl Cli {
                 dry_run,
                 tools,
                 expand_env,
-            }) => commands::run_sync(dry_run, &tools, expand_env, self.config.as_deref()),
+                mcp,
+                hooks,
+                skills,
+                rules,
+                all,
+            }) => {
+                let dimensions = resolve_sync_dimensions(mcp, hooks, skills, rules, all);
+                commands::run_sync_dimensions(
+                    &dimensions,
+                    dry_run,
+                    &tools,
+                    expand_env,
+                    self.config.as_deref(),
+                )
+            }
             Some(Commands::Check) => commands::run_check(self.config.as_deref()),
             Some(Commands::Status) => commands::run_status(self.config.as_deref()),
             Some(Commands::Doctor { tools }) => {
                 let results = commands::run_doctor(&tools)?;
                 commands::print_doctor_results(&results);
-                let consistency = commands::run_doctor_consistency(&tools)?;
+                let mut consistency = commands::run_doctor_consistency(&tools)?;
+                consistency.extend(commands::run_doctor_hooks_consistency(&tools)?);
+                consistency.extend(commands::run_doctor_skills_consistency(&tools)?);
+                consistency.extend(commands::run_doctor_rules_consistency(&tools)?);
                 commands::print_consistency_reports(&consistency);
                 Ok(())
             }

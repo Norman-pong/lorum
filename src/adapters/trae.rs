@@ -14,6 +14,20 @@
 //!   }
 //! }
 //! ```
+//!
+//! # Hooks support
+//!
+//! Trae does **not** support hooks configuration as of 2026-05-19.
+//! Investigation of the Trae configuration directory (`~/.trae/`) and
+//! project-level `.trae/` directories found no hooks-related configuration
+//! files. Trae's configuration is limited to:
+//! - `mcp.json` (MCP servers)
+//! - `skill-config.json` (skill management)
+//! - `argv.json` (application settings)
+//! - Built-in and user skills directories
+//!
+//! Therefore `TraeAdapter` does **not** implement `HooksAdapter`, and Trae
+//! is **not** registered in `ALL_HOOKS_ADAPTERS`.
 
 use std::path::{Path, PathBuf};
 

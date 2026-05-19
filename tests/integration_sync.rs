@@ -2,13 +2,22 @@
 //!
 //! These tests exercise the public API only, using temporary files so no
 //! real user configuration is touched.
+//!
+//! # Dimensions covered
+//!
+//! - MCP sync (original tests)
+//! - Hooks sync (F3)
+//! - Skills sync (F3)
+//! - Rules sync (F3)
+//! - Combined multi-dimension sync (F3)
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::path::Path;
 
 use lorum::config::{
-    LorumConfig, McpConfig, McpServer, ProjectConfig, load_config, load_project_config,
-    merge_configs, save_config,
+    HookHandler, HooksConfig, LorumConfig, McpConfig, McpServer, ProjectConfig, load_config,
+    load_project_config, merge_configs, save_config,
 };
 use lorum::env_interpolate;
 use lorum::sync;
@@ -549,4 +558,364 @@ fn env_interpolation_expands_vars() {
     // Multiple placeholders in one string are all preserved when unset.
     let multi = env_interpolate::interpolate_env("${A} and ${B} and ${C}", true);
     assert_eq!(multi, "${A} and ${B} and ${C}");
+}
+
+// ---------------------------------------------------------------------------
+// F3 – Hooks sync integration tests
+// ---------------------------------------------------------------------------
+
+/// Helper: build a sample `HooksConfig` with two events.
+fn sample_hooks_config() -> HooksConfig {
+    let mut config = HooksConfig::default();
+    config.events.insert(
+        "pre-tool-use".into(),
+        vec![HookHandler {
+            matcher: "Bash".into(),
+            command: "scripts/safety-check.sh".into(),
+            timeout: Some(60),
+            handler_type: None,
+        }],
+    );
+    config.events.insert(
+        "post-tool-use".into(),
+        vec![HookHandler {
+            matcher: "Write|Edit".into(),
+            command: "cargo fmt".into(),
+            timeout: None,
+            handler_type: None,
+        }],
+    );
+    config
+}
+
+#[test]
+fn sync_hooks_all_produces_results_for_all_adapters() {
+    let hooks = sample_hooks_config();
+    let results = sync::sync_hooks_all(&hooks);
+    // 6 registered hooks adapters.
+    assert_eq!(results.len(), 6);
+
+    let names: Vec<&str> = results.iter().map(|r| r.tool.as_str()).collect();
+    assert!(names.contains(&"claude-code"));
+    assert!(names.contains(&"kimi"));
+    assert!(names.contains(&"cursor"));
+    assert!(names.contains(&"codex"));
+    assert!(names.contains(&"windsurf"));
+    assert!(names.contains(&"opencode"));
+}
+
+#[test]
+fn sync_hooks_tools_filters_to_specified_tools() {
+    let hooks = sample_hooks_config();
+    let results = sync::sync_hooks_tools(&hooks, &["opencode".into(), "codex".into()]);
+    assert_eq!(results.len(), 2);
+    let names: Vec<&str> = results.iter().map(|r| r.tool.as_str()).collect();
+    assert!(names.contains(&"opencode"));
+    assert!(names.contains(&"codex"));
+}
+
+#[test]
+fn sync_hooks_tools_reports_unknown_adapter() {
+    let hooks = sample_hooks_config();
+    let results = sync::sync_hooks_tools(&hooks, &["nonexistent-tool".into()]);
+    assert_eq!(results.len(), 1);
+    assert!(!results[0].success);
+    assert!(results[0].error.as_ref().unwrap().contains("not found"));
+}
+
+#[test]
+fn dry_run_hooks_all_reads_without_writing() {
+    let dir = tempfile::tempdir().unwrap();
+    let original_home = std::env::var_os("HOME");
+
+    let result = std::panic::catch_unwind(|| {
+        unsafe { std::env::set_var("HOME", dir.path()) };
+
+        let hooks = sample_hooks_config();
+        let results = sync::dry_run_hooks_all(&hooks);
+        assert_eq!(results.len(), 6);
+        for r in &results {
+            assert!(
+                r.success,
+                "dry_run read failed for {}: {:?}",
+                r.tool, r.error
+            );
+        }
+
+        // Verify no hooks config files were created in temp home.
+        assert!(!dir.path().join(".claude").join("settings.json").exists());
+        assert!(!dir.path().join(".kimi").join("config.toml").exists());
+    });
+
+    unsafe {
+        match original_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+    assert!(result.is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// F3 – Skills sync integration tests
+// ---------------------------------------------------------------------------
+
+/// Helper: create a skill directory with SKILL.md under `parent`.
+fn make_skill_dir(parent: &Path, name: &str) -> std::path::PathBuf {
+    let dir = parent.join(name);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: \"Test skill\"\n---\n# {name}\n"),
+    )
+    .unwrap();
+    dir
+}
+
+#[test]
+fn sync_skills_all_syncs_to_all_adapters() {
+    let src = tempfile::tempdir().unwrap();
+    make_skill_dir(src.path(), "integration-test-skill");
+
+    let results = sync::sync_skills_all(src.path());
+    // 8 registered skills adapters.
+    assert_eq!(results.len(), 8);
+
+    let names: Vec<&str> = results.iter().map(|r| r.tool.as_str()).collect();
+    assert!(names.contains(&"claude-code"));
+    assert!(names.contains(&"codex"));
+    assert!(names.contains(&"cursor"));
+    assert!(names.contains(&"kimi"));
+    assert!(names.contains(&"opencode"));
+    assert!(names.contains(&"proma"));
+    assert!(names.contains(&"trae"));
+    assert!(names.contains(&"windsurf"));
+}
+
+#[test]
+fn sync_skills_tools_filters_correctly() {
+    let src = tempfile::tempdir().unwrap();
+    make_skill_dir(src.path(), "filtered-skill");
+
+    let results = sync::sync_skills_tools(src.path(), &["codex".into(), "kimi".into()]);
+    assert_eq!(results.len(), 2);
+    let names: Vec<&str> = results.iter().map(|r| r.tool.as_str()).collect();
+    assert!(names.contains(&"codex"));
+    assert!(names.contains(&"kimi"));
+}
+
+#[test]
+fn sync_skills_tools_unknown_adapter_fails() {
+    let src = tempfile::tempdir().unwrap();
+    let results = sync::sync_skills_tools(src.path(), &["no-such-tool".into()]);
+    assert_eq!(results.len(), 1);
+    assert!(!results[0].success);
+    assert!(results[0].error.as_ref().unwrap().contains("not found"));
+}
+
+#[test]
+fn dry_run_skills_all_does_not_write() {
+    let home = tempfile::tempdir().unwrap();
+    let src = tempfile::tempdir().unwrap();
+    make_skill_dir(src.path(), "dry-skill");
+
+    let original_home = std::env::var_os("HOME");
+    let result = std::panic::catch_unwind(|| {
+        unsafe { std::env::set_var("HOME", home.path()) };
+
+        let results = sync::dry_run_skills_all(src.path());
+        assert_eq!(results.len(), 8);
+        for r in &results {
+            assert!(r.success, "dry_run failed for {}: {:?}", r.tool, r.error);
+        }
+
+        // No skills directories should have been created under temp home.
+        assert!(!home.path().join(".claude").join("skills").exists());
+        assert!(!home.path().join(".codex").join("skills").exists());
+    });
+
+    unsafe {
+        match original_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+    assert!(result.is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// F3 – Rules sync integration tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sync_rules_all_syncs_to_all_adapters() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    let content = "# Project Rules\n\n## Style\nUse 4 spaces.\n";
+    let results = sync::sync_rules_all(root, content);
+    assert_eq!(results.len(), 7);
+    for r in &results {
+        assert!(r.success, "rules sync failed for {}: {:?}", r.tool, r.error);
+    }
+
+    // Verify a few well-known files.
+    assert_eq!(
+        fs::read_to_string(root.join(".cursorrules")).unwrap(),
+        content
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".windsurfrules")).unwrap(),
+        content
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".codex").join("rules.md")).unwrap(),
+        content
+    );
+}
+
+#[test]
+fn sync_rules_tools_filters_correctly() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    let content = "# Rules\n";
+    let results = sync::sync_rules_tools(root, content, &["cursor".into(), "codex".into()]);
+    assert_eq!(results.len(), 2);
+    assert!(results[0].success);
+    assert!(results[1].success);
+
+    let names: Vec<&str> = results.iter().map(|r| r.tool.as_str()).collect();
+    assert!(names.contains(&"cursor"));
+    assert!(names.contains(&"codex"));
+}
+
+#[test]
+fn sync_rules_tools_unknown_adapter_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let results = sync::sync_rules_tools(dir.path(), "# Rules\n", &["ghost-tool".into()]);
+    assert_eq!(results.len(), 1);
+    assert!(!results[0].success);
+    assert!(results[0].error.as_ref().unwrap().contains("not found"));
+}
+
+#[test]
+fn dry_run_rules_all_does_not_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    let content = "# Rules\n## Testing\nRun cargo test\n";
+    let results = sync::dry_run_rules_all(root, content);
+    assert_eq!(results.len(), 7);
+    for r in &results {
+        assert!(
+            r.success,
+            "dry_run read failed for {}: {:?}",
+            r.tool, r.error
+        );
+        assert!(r.needs_update, "{} should need update", r.tool);
+    }
+
+    // No files should have been written.
+    assert!(!root.join(".cursorrules").exists());
+    assert!(!root.join(".windsurfrules").exists());
+    assert!(!root.join(".codex").join("rules.md").exists());
+}
+
+// ---------------------------------------------------------------------------
+// F3 – Combined multi-dimension sync (simulates --hooks --skills --rules)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn combined_sync_hooks_skills_rules_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let original_home = std::env::var_os("HOME");
+
+    let result = std::panic::catch_unwind(|| {
+        unsafe { std::env::set_var("HOME", dir.path()) };
+
+        // 1. Hooks sync
+        let hooks = sample_hooks_config();
+        let hooks_results = sync::sync_hooks_all(&hooks);
+        assert_eq!(hooks_results.len(), 6);
+
+        // 2. Skills sync
+        let skills_src = dir.path().join("unified-skills");
+        fs::create_dir_all(&skills_src).unwrap();
+        make_skill_dir(&skills_src, "combined-skill");
+        let skills_results = sync::sync_skills_all(&skills_src);
+        assert_eq!(skills_results.len(), 8);
+
+        // 3. Rules sync
+        let rules_content = "# Combined Rules\n## Style\nUse tabs.\n";
+        let rules_results = sync::sync_rules_all(root, rules_content);
+        assert_eq!(rules_results.len(), 7);
+        for r in &rules_results {
+            assert!(r.success, "rules sync failed for {}: {:?}", r.tool, r.error);
+        }
+
+        // Verify rules files exist.
+        assert!(root.join(".cursorrules").exists());
+        assert_eq!(
+            fs::read_to_string(root.join(".cursorrules")).unwrap(),
+            rules_content
+        );
+    });
+
+    unsafe {
+        match original_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+    assert!(result.is_ok());
+}
+
+#[test]
+fn combined_dry_run_hooks_skills_rules_does_not_mutate() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let original_home = std::env::var_os("HOME");
+
+    let result = std::panic::catch_unwind(|| {
+        unsafe { std::env::set_var("HOME", dir.path()) };
+
+        // Hooks dry run
+        let hooks = sample_hooks_config();
+        let hooks_dry = sync::dry_run_hooks_all(&hooks);
+        assert_eq!(hooks_dry.len(), 6);
+        for r in &hooks_dry {
+            assert!(r.success);
+        }
+
+        // Skills dry run
+        let skills_src = dir.path().join("unified-skills-dry");
+        fs::create_dir_all(&skills_src).unwrap();
+        make_skill_dir(&skills_src, "dry-skill");
+        let skills_dry = sync::dry_run_skills_all(&skills_src);
+        assert_eq!(skills_dry.len(), 8);
+        for r in &skills_dry {
+            assert!(r.success);
+        }
+
+        // Rules dry run
+        let rules_dry = sync::dry_run_rules_all(root, "# Rules\n");
+        assert_eq!(rules_dry.len(), 7);
+        for r in &rules_dry {
+            assert!(r.success);
+        }
+
+        // Nothing was written.
+        assert!(!root.join(".cursorrules").exists());
+        assert!(!root.join(".windsurfrules").exists());
+    });
+
+    unsafe {
+        match original_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+    assert!(result.is_ok());
 }

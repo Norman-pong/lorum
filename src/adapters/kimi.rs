@@ -25,12 +25,13 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::adapters::{
-    ConfigValidator, HooksAdapter, RulesAdapter, Severity, ToolAdapter, ValidationIssue,
-    kebab_to_pascal, pascal_to_kebab, read_rules_file, toml_utils, validate_all_syntax,
-    write_rules_file,
+    ConfigValidator, HooksAdapter, RulesAdapter, Severity, SkillsAdapter, ToolAdapter,
+    ValidationIssue, kebab_to_pascal, pascal_to_kebab, read_rules_file, toml_utils,
+    validate_all_syntax, write_rules_file,
 };
 use crate::config::{HookHandler, HooksConfig, McpConfig};
 use crate::error::LorumError;
+use crate::skills::{SkillEntry, copy_dir_recursive, scan_skills_dir};
 
 /// Adapter for Kimi rules.
 ///
@@ -53,6 +54,66 @@ impl RulesAdapter for KimiRulesAdapter {
 
     fn write_rules(&self, project_root: &Path, content: &str) -> Result<(), LorumError> {
         write_rules_file(&self.rules_path(project_root), content)
+    }
+}
+
+/// Adapter for Kimi skills.
+///
+/// Reads and writes skills from Kimi's `~/.kimi/skills/` directory.
+pub struct KimiSkillsAdapter;
+
+impl SkillsAdapter for KimiSkillsAdapter {
+    /// Returns the adapter name `"kimi"`.
+    fn name(&self) -> &str {
+        "kimi"
+    }
+
+    /// Returns `~/.kimi/skills/` if the home directory can be determined.
+    fn skills_base_dir(&self) -> Option<PathBuf> {
+        dirs::home_dir().map(|h| h.join(".kimi").join("skills"))
+    }
+
+    /// Scans `~/.kimi/skills/` and returns all discovered skills.
+    ///
+    /// Returns an empty list when the directory does not exist.
+    fn read_skills(&self) -> Result<Vec<SkillEntry>, LorumError> {
+        let Some(dir) = self.skills_base_dir() else {
+            return Ok(Vec::new());
+        };
+        scan_skills_dir(&dir)
+    }
+
+    /// Copies a skill directory into `~/.kimi/skills/<name>`.
+    ///
+    /// If a skill with the same name already exists it is renamed to
+    /// `.old-<name>` before the new content is copied.
+    fn write_skill(&self, name: &str, source_dir: &Path) -> Result<(), LorumError> {
+        let dir = self.skills_base_dir().ok_or_else(|| LorumError::Other {
+            message: "cannot determine home directory".into(),
+        })?;
+        let target = dir.join(name);
+        if target.exists() {
+            let old = dir.join(format!(".old-{name}"));
+            if old.exists() {
+                std::fs::remove_dir_all(&old)?;
+            }
+            std::fs::rename(&target, &old)?;
+        }
+        copy_dir_recursive(source_dir, &target)
+    }
+
+    /// Removes a skill directory from `~/.kimi/skills/`.
+    ///
+    /// Does nothing if the skill does not exist.
+    fn remove_skill(&self, name: &str) -> Result<(), LorumError> {
+        let dir = self.skills_base_dir().ok_or_else(|| LorumError::Other {
+            message: "cannot determine home directory".into(),
+        })?;
+        let target = dir.join(name);
+        if target.exists() {
+            std::fs::remove_dir_all(target)?;
+        }
+        Ok(())
     }
 }
 
@@ -385,6 +446,113 @@ mod kimi_rules_tests {
     fn rules_adapter_name() {
         let adapter = KimiRulesAdapter;
         assert_eq!(adapter.name(), "kimi");
+    }
+}
+
+#[cfg(test)]
+mod kimi_skills_tests {
+    use super::*;
+
+    #[test]
+    #[serial_test::serial]
+    fn skills_adapter_name() {
+        let adapter = KimiSkillsAdapter;
+        assert_eq!(adapter.name(), "kimi");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn read_skills_empty_when_no_dir() {
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", home.path()) };
+        let adapter = KimiSkillsAdapter;
+        let skills = adapter.read_skills().unwrap();
+        assert!(skills.is_empty());
+        unsafe { std::env::remove_var("HOME") };
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn write_skill_copies_directory_contents() {
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", home.path()) };
+        let src = tempfile::tempdir().unwrap();
+        std::fs::write(
+            src.path().join("SKILL.md"),
+            "---\nname: test-skill\ndescription: \"Test\"\n---\n",
+        )
+        .unwrap();
+
+        let adapter = KimiSkillsAdapter;
+        adapter.write_skill("test-skill", src.path()).unwrap();
+        let skills = adapter.read_skills().unwrap();
+        assert!(skills.iter().any(|s| s.manifest.name == "test-skill"));
+        adapter.remove_skill("test-skill").unwrap();
+        unsafe { std::env::remove_var("HOME") };
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn write_skill_backs_up_existing() {
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", home.path()) };
+        let src1 = tempfile::tempdir().unwrap();
+        std::fs::write(
+            src1.path().join("SKILL.md"),
+            "---\nname: my-skill\ndescription: \"v1\"\n---\n",
+        )
+        .unwrap();
+
+        let adapter = KimiSkillsAdapter;
+        adapter.write_skill("my-skill", src1.path()).unwrap();
+
+        // Write a second version -- should back up the first.
+        let src2 = tempfile::tempdir().unwrap();
+        std::fs::write(
+            src2.path().join("SKILL.md"),
+            "---\nname: my-skill\ndescription: \"v2\"\n---\n",
+        )
+        .unwrap();
+        adapter.write_skill("my-skill", src2.path()).unwrap();
+
+        let skills = adapter.read_skills().unwrap();
+        skills
+            .iter()
+            .find(|s| s.manifest.name == "my-skill" && s.manifest.description == "v2")
+            .expect("should find skill with description v2");
+
+        // Backup should exist.
+        let base = adapter.skills_base_dir().unwrap();
+        assert!(base.join(".old-my-skill").exists());
+
+        adapter.remove_skill("my-skill").unwrap();
+        unsafe { std::env::remove_var("HOME") };
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn remove_skill_deletes_directory() {
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", home.path()) };
+        let adapter = KimiSkillsAdapter;
+        adapter
+            .write_skill("test-skill", tempfile::tempdir().unwrap().path())
+            .unwrap();
+        adapter.remove_skill("test-skill").unwrap();
+        let skills = adapter.read_skills().unwrap();
+        assert!(!skills.iter().any(|s| s.manifest.name == "test-skill"));
+        unsafe { std::env::remove_var("HOME") };
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn remove_skill_is_ok_when_missing() {
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", home.path()) };
+        let adapter = KimiSkillsAdapter;
+        // Removing a non-existent skill should not error.
+        adapter.remove_skill("no-such-skill").unwrap();
+        unsafe { std::env::remove_var("HOME") };
     }
 }
 
