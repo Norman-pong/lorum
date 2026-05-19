@@ -12,6 +12,7 @@
 //! - Combined multi-dimension sync (F3)
 
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
 
@@ -173,9 +174,13 @@ fn full_roundtrip_add_sync_verify() {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[serial_test::serial]
 fn backup_and_restore_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.yaml");
+
+    let xdg = dir.path().join("xdg_config");
+    let _guard = EnvGuard::set("XDG_CONFIG_HOME", &xdg);
 
     // Create an original config.
     let original = LorumConfig {
@@ -239,9 +244,13 @@ fn backup_and_restore_roundtrip() {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[serial_test::serial]
 fn backup_cleanup_keeps_max() {
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.yaml");
+
+    let xdg = dir.path().join("xdg_config");
+    let _guard = EnvGuard::set("XDG_CONFIG_HOME", &xdg);
 
     // Write a dummy file to back up.
     fs::write(&config_path, "test content").unwrap();
@@ -748,9 +757,13 @@ fn dry_run_skills_all_does_not_write() {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[serial_test::serial]
 fn sync_rules_all_syncs_to_all_adapters() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
+
+    let xdg = dir.path().join("xdg_config");
+    let _guard = EnvGuard::set("XDG_CONFIG_HOME", &xdg);
 
     let content = "# Project Rules\n\n## Style\nUse 4 spaces.\n";
     let results = sync::sync_rules_all(root, content);
@@ -827,10 +840,14 @@ fn dry_run_rules_all_does_not_write() {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[serial_test::serial]
 fn combined_sync_hooks_skills_rules_succeeds() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let original_home = std::env::var_os("HOME");
+
+    let xdg = dir.path().join("xdg_config");
+    let _guard = EnvGuard::set("XDG_CONFIG_HOME", &xdg);
 
     let result = std::panic::catch_unwind(|| {
         unsafe { std::env::set_var("HOME", dir.path()) };
@@ -918,4 +935,32 @@ fn combined_dry_run_hooks_skills_rules_does_not_mutate() {
         }
     }
     assert!(result.is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// EnvGuard helper for tests that need to override XDG_CONFIG_HOME
+// ---------------------------------------------------------------------------
+
+struct EnvGuard {
+    key: &'static str,
+    old: Option<OsString>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: &Path) -> Self {
+        let old = std::env::var_os(key);
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self { key, old }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.old {
+            Some(v) => unsafe { std::env::set_var(self.key, v) },
+            None => unsafe { std::env::remove_var(self.key) },
+        }
+    }
 }

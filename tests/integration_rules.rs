@@ -3,20 +3,54 @@
 //! These tests exercise the public API to replicate the full workflows that the
 //! CLI commands perform: init, add, edit, remove, sync, import, and backup.
 
+use std::ffi::OsString;
 use std::fs;
+use std::path::Path;
 
 use lorum::adapters::{all_rules_adapters, find_rules_adapter};
 use lorum::rules::{self, RulesFile, RulesSection};
 use lorum::sync;
 
 // ---------------------------------------------------------------------------
+// Test helper: temporarily override an environment variable
+// ---------------------------------------------------------------------------
+
+struct EnvGuard {
+    key: &'static str,
+    old: Option<OsString>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: &Path) -> Self {
+        let old = std::env::var_os(key);
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self { key, old }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.old {
+            Some(v) => unsafe { std::env::set_var(self.key, v) },
+            None => unsafe { std::env::remove_var(self.key) },
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // T5.1 – Full workflow: init -> add -> sync -> verify tool files
 // ---------------------------------------------------------------------------
 
 #[test]
+#[serial_test::serial]
 fn test_rule_full_workflow() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
+
+    let xdg = dir.path().join("xdg_config");
+    let _guard = EnvGuard::set("XDG_CONFIG_HOME", &xdg);
 
     // Step 1: rule_init — create .lorum/RULES.md with a default template.
     let init_rules = RulesFile {
@@ -267,9 +301,13 @@ fn test_rule_import_into_existing() {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[serial_test::serial]
 fn test_rule_sync_creates_backup() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
+
+    let xdg = dir.path().join("xdg_config");
+    let _guard = EnvGuard::set("XDG_CONFIG_HOME", &xdg);
 
     // Create an existing .cursorrules file with old content.
     let old_content = "Old cursor rules content.";
@@ -423,9 +461,13 @@ fn test_find_rules_adapter_by_name() {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[serial_test::serial]
 fn test_rules_file_roundtrip_via_sync() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
+
+    let xdg = dir.path().join("xdg_config");
+    let _guard = EnvGuard::set("XDG_CONFIG_HOME", &xdg);
 
     // Create a rules file.
     let original = RulesFile {
